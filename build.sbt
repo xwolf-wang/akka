@@ -1,6 +1,6 @@
 import akka.AutomaticModuleName
 
-enablePlugins(UnidocRoot, TimeStampede, UnidocWithPrValidation, NoPublish)
+enablePlugins(akka.UnidocRoot, akka.TimeStampede, akka.UnidocWithPrValidation, akka.NoPublish)
 disablePlugins(MimaPlugin)
 
 import com.typesafe.sbt.SbtMultiJvm.MultiJvmKeys.MultiJvm
@@ -17,6 +17,7 @@ initialize := {
 }
 
 akka.AkkaBuild.buildSettings
+akka.Release.settings
 shellPrompt := { s => Project.extract(s).currentProject.id + " > " }
 resolverSettings
 
@@ -35,7 +36,7 @@ lazy val aggregatedProjects: Seq[ProjectReference] = Seq(
   protobuf,
   remote, remoteTests,
   slf4j,
-  stream, streamTestkit, streamTests, streamTestsTck,
+  stream, streamTestkit, streamTests, streamTestsTck, 
   testkit,
   typed, typedTests, typedTestkit
 )
@@ -76,7 +77,6 @@ lazy val agent = akkaModule("akka-agent")
 lazy val akkaScalaNightly = akkaModule("akka-scala-nightly")
   // remove dependencies that we have to build ourselves (Scala STM)
   .aggregate(aggregatedProjects diff List[ProjectReference](agent, docs): _*)
-  .disablePlugins(MimaPlugin)
   .disablePlugins(ValidatePullRequest, MimaPlugin)
 
 lazy val benchJmh = akkaModule("akka-bench-jmh")
