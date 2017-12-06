@@ -90,6 +90,7 @@ object RemoveInternalClusterShardingDataSpec {
 
 }
 
+/* FIXME #23907
 class RemoveInternalClusterShardingDataSpec extends AkkaSpec(RemoveInternalClusterShardingDataSpec.config)
   with ImplicitSender {
   import RemoveInternalClusterShardingDataSpec._
@@ -208,3 +209,4 @@ class RemoveInternalClusterShardingDataSpec extends AkkaSpec(RemoveInternalClust
     }
   }
 }
+*/
