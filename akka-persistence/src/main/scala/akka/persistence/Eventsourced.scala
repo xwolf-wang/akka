@@ -9,12 +9,12 @@ import java.util.UUID
 
 import scala.collection.immutable
 import scala.util.control.NonFatal
-import akka.actor.{ DeadLetter, StashOverflowException }
+import akka.actor.{ StashOverflowException, DeadLetter, ActorCell }
 import akka.annotation.InternalApi
+import akka.dispatch.Envelope
 import akka.util.Helpers.ConfigOps
 import akka.event.Logging
 import akka.event.LoggingAdapter
-
 import scala.concurrent.duration.FiniteDuration
 
 /**
@@ -42,11 +42,20 @@ private[persistence] object Eventsourced {
  *
  * Scala API and implementation details of [[PersistentActor]] and [[AbstractPersistentActor]].
  */
-private[persistence] trait Eventsourced extends Snapshotter with PersistenceStash with PersistenceIdentity with PersistenceRecovery {
+private[persistence] trait Eventsourced extends Snapshotter with PersistenceStash
+  with PersistenceIdentity with PersistenceRecovery {
   import JournalProtocol._
   import SnapshotProtocol.LoadSnapshotResult
   import SnapshotProtocol.LoadSnapshotFailed
   import Eventsourced._
+
+  {
+    val interfaces = getClass.getInterfaces
+    val i = interfaces.indexOf(classOf[PersistentActor])
+    val j = interfaces.indexOf(classOf[akka.actor.Timers])
+    if (i != -1 && j != -1 && i < j)
+      throw new IllegalStateException("use Timers with PersistentActor, instead of PersistentActor with Timers")
+  }
 
   private val extension = Persistence(context.system)
 
@@ -389,6 +398,14 @@ private[persistence] trait Eventsourced extends Snapshotter with PersistenceStas
    */
   def recoveryFinished: Boolean = !recoveryRunning
 
+  override def stash(): Unit = {
+    context.asInstanceOf[ActorCell].currentMessage match {
+      case Envelope(_: JournalProtocol.Response, _) ⇒
+        throw new IllegalStateException("Do not call stash inside of persist callback or during recovery.")
+      case _ ⇒ super.stash()
+    }
+  }
+
   override def unstashAll() {
     // Internally, all messages are processed by unstashing them from
     // the internal stash one-by-one. Hence, an unstashAll() from the
@@ -541,7 +558,9 @@ private[persistence] trait Eventsourced extends Snapshotter with PersistenceStas
           setLastSequenceNr(highestSeqNr)
           _recoveryRunning = false
           try Eventsourced.super.aroundReceive(recoveryBehavior, RecoveryCompleted)
-          finally transitToProcessingState()
+          finally transitToProcessingState() // in finally in case exception and resume strategy
+          // if exception from RecoveryCompleted the permit is returned in below catch
+          returnRecoveryPermit()
         case ReplayMessagesFailure(cause) ⇒
           timeoutCancellable.cancel()
           try onRecoveryFailure(cause, event = None) finally context.stop(self)
@@ -567,8 +586,6 @@ private[persistence] trait Eventsourced extends Snapshotter with PersistenceStas
         extension.recoveryPermitter.tell(RecoveryPermitter.ReturnRecoveryPermit, self)
 
       private def transitToProcessingState(): Unit = {
-        returnRecoveryPermit()
-
         if (eventBatch.nonEmpty) flushBatch()
 
         if (pendingStashingPersistInvocations > 0) changeState(persistingEvents)

@@ -789,8 +789,10 @@ public class ActorDocTest extends AbstractJavaTest {
         watch(victim);
         //#kill
         victim.tell(akka.actor.Kill.getInstance(), ActorRef.noSender());
-        //#kill
+        
+        // expecting the actor to indeed terminate:
         expectTerminated(Duration.create(3, TimeUnit.SECONDS), victim);
+        //#kill
       }
     };
   }
@@ -830,7 +832,8 @@ public class ActorDocTest extends AbstractJavaTest {
     // don't run this
     if (false) {
       //#coordinated-shutdown-run
-      CompletionStage<Done> done = CoordinatedShutdown.get(system).runAll();
+      CompletionStage<Done> done = CoordinatedShutdown.get(system).runAll(
+          CoordinatedShutdown.unknownReason());
       //#coordinated-shutdown-run
     }
   }

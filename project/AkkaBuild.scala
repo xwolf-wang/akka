@@ -4,19 +4,17 @@
 
 package akka
 
-import java.io.{ FileInputStream, InputStreamReader }
+import java.io.{FileInputStream, InputStreamReader}
 import java.util.Properties
 
-import akka.TestExtras.JUnitFileReporting
 import com.typesafe.sbt.pgp.PgpKeys.publishSigned
 import sbt.Keys._
-//import sbt.TestLogger.wrap
 import sbt._
-import sbtwhitesource.WhiteSourcePlugin.autoImport.whitesourceIgnore
+import sbtwhitesource.WhiteSourcePlugin
+
+import scala.collection.breakOut
 
 object AkkaBuild {
-
-  @deprecated("used to exist in previous sbt") def wrap[T](logger: T): T = logger
 
   val enableMiMa = true
 
@@ -26,18 +24,20 @@ object AkkaBuild {
     organization := "com.typesafe.akka",
     version := "2.5-SNAPSHOT")
 
-  //  lazy val rootSettings = parentSettings ++ Release.settings ++ // FIXME
-  lazy val rootSettings = parentSettings // ++ FIXME
-  //    UnidocRoot.akkaSettings ++
-  //    Protobuf.settings ++ Seq(
-  //      parallelExecution in GlobalScope := System.getProperty("akka.parallelExecution", parallelExecutionByDefault.toString).toBoolean
-  //    )
+  lazy val rootSettings = parentSettings
+  /* FIXME original:
+    Release.settings ++
+    UnidocRoot.akkaSettings ++
+    Formatting.formatSettings ++
+    Protobuf.settings ++ Seq(
+      parallelExecution in GlobalScope := System.getProperty("akka.parallelExecution", parallelExecutionByDefault.toString).toBoolean)
+      */
 
   val dontPublishSettings = Seq(
     publishSigned := (),
     publish := (),
     publishArtifact in Compile := false,
-    whitesourceIgnore := true
+    WhiteSourcePlugin.autoImport.whitesourceIgnore := true
   )
 
   val dontPublishDocsSettings = Seq(
@@ -45,6 +45,7 @@ object AkkaBuild {
 
   lazy val parentSettings = Seq(
     publishArtifact := false) ++ dontPublishSettings
+
 
   lazy val mayChangeSettings = Seq(
     description := """|This module of Akka is marked as
@@ -64,12 +65,24 @@ object AkkaBuild {
       case null ⇒ (Resolver.mavenLocal, Seq.empty)
       case path ⇒
         // Maven resolver settings
+        def deliverPattern(outputPath: File): String =
+          (outputPath / "[artifact]-[revision](-[classifier]).[ext]").absolutePath
+
         val resolver = Resolver.file("user-publish-m2-local", new File(path))
         (resolver, Seq(
           otherResolvers := resolver :: publishTo.value.toList
-        // ,
-        // FIXME seems to need much more things now...
-        // publishM2Configuration := Classpaths.publishConfig(packagedArtifacts.value, None, resolverName = resolver.name, checksums = checksums.in(publishM2).value, logging = ivyLoggingLevel.value, overwrite = true)
+          /*  FIXME seems to need much more things now...
+          publishM2Configuration := Classpaths.publishConfig(
+            publishMavenStyle.value,
+            deliverPattern(crossTarget.value),
+            if (isSnapshot.value) "integration" else "release",
+            ivyConfigurations.value.map(c => ConfigRef(c.name)).toVector,
+            artifacts = packagedArtifacts.value.toVector,
+            resolverName = resolver.name,
+            checksums = checksums.in(publishM2).value.toVector,
+            logging = ivyLoggingLevel.value,
+            overwrite = true))
+            */
         ))
     }
 
@@ -91,8 +104,8 @@ object AkkaBuild {
 
   lazy val defaultSettings = resolverSettings ++
     TestExtras.Filter.settings ++
-    // Protobuf.settings ++ Seq( // FIXME
-    Seq(
+    // Protobuf.settings ++ // FIXME
+    Seq[Setting[_]](
       // compile options
       scalacOptions in Compile ++= Seq("-encoding", "UTF-8", "-target:jvm-1.8", "-feature", "-unchecked", "-Xlog-reflective-calls", "-Xlint"),
       scalacOptions in Compile ++= (if (allWarnings) Seq("-deprecation") else Nil),
@@ -102,7 +115,6 @@ object AkkaBuild {
       javacOptions in compile ++= Seq("-encoding", "UTF-8", "-source", "1.8", "-target", "1.8", "-Xlint:unchecked", "-XDignore.symbol.file"),
       javacOptions in compile ++= (if (allWarnings) Seq("-Xlint:deprecation") else Nil),
       javacOptions in doc ++= Seq(),
-      //    incOptions := incOptions.value.withNameHashing(true), // no idea, it's gone now?
 
       crossVersion := CrossVersion.binary,
 
@@ -133,44 +145,68 @@ object AkkaBuild {
       /**
        * Test settings
        */
+      fork in Test := true,
+
+      // default JVM config for tests
+      javaOptions in Test ++= {
+        val defaults = Seq(
+          // ## core memory settings
+          "-XX:+UseG1GC",
+          // most tests actually don't really use _that_ much memory (>1g usually)
+          // twice used (and then some) keeps G1GC happy - very few or to no full gcs
+          "-Xms3g", "-Xmx3g",
+          // increase stack size (todo why?)
+          "-Xss2m",
+
+          // ## extra memory/gc tuning
+          // this breaks jstat, but could avoid costly syncs to disc see http://www.evanjones.ca/jvm-mmap-pause.html
+          "-XX:+PerfDisableSharedMem",
+          // tell G1GC that we would be really happy if all GC pauses could be kept below this as higher would
+          // likely start causing test failures in timing tests
+          "-XX:MaxGCPauseMillis=300",
+          // nio direct memory limit for artery/aeron (probably)
+          "-XX:MaxDirectMemorySize=256m",
+
+          // faster random source
+          "-Djava.security.egd=file:/dev/./urandom")
+
+        if (sys.props.contains("akka.ci-server"))
+          defaults ++ Seq("-XX:+PrintGCTimeStamps", "-XX:+PrintGCDetails")
+        else
+          defaults
+      },
+
+      // all system properties passed to sbt prefixed with "akka." will be passed on to the forked jvms as is
+      javaOptions in Test := {
+        val base = (javaOptions in Test).value
+        val akkaSysProps: Seq[String] =
+          sys.props.filter(_._1.startsWith("akka"))
+            .map { case (key, value) ⇒ s"-D$key=$value" }(breakOut)
+
+        base ++ akkaSysProps
+      },
+
+      // with forked tests the working directory is set to each module's home directory
+      // rather than the Akka root, some tests depend on Akka root being working dir, so reset
+      testGrouping in Test := {
+        val original: Seq[Tests.Group] = (testGrouping in Test).value
+
+        original.map { group ⇒
+          group.runPolicy match {
+            case Tests.SubProcess(forkOptions) ⇒
+              group.copy(runPolicy = Tests.SubProcess(forkOptions.withWorkingDirectory(
+                workingDirectory = Some(new File(System.getProperty("user.dir"))))))
+            case _ ⇒ group
+          }
+        }
+      },
 
       parallelExecution in Test := System.getProperty("akka.parallelExecution", parallelExecutionByDefault.toString).toBoolean,
       logBuffered in Test := System.getProperty("akka.logBufferedTests", "false").toBoolean,
 
       // show full stack traces and test case durations
-      testOptions in Test += Tests.Argument("-oDF"),
-
-      // FIXME no idea how to fix this
-      // don't save test output to a file, workaround for https://github.com/sbt/sbt/issues/937
-      //    testListeners in (Test, test) := {
-      //      val logger = streams.value.log
-      //
-      //      def contentLogger(log: sbt.Logger, buffered: Boolean): ContentLogger = {
-      //        val blog = new BufferedLogger(FullLogger(log))
-      //        if (buffered) blog.record()
-      //         new ContentLogger(new testing.Logger { // TODO is this the way?
-      //           override def debug(s: String): Unit = blog.debug(s)
-      //           override def error(s: String): Unit = blog.error(s)
-      //           override def ansiCodesSupported(): Boolean = blog.ansiCodesSupported
-      //           override def warn(s: String): Unit = blog.warn(s)
-      //           override def trace(throwable: Throwable): Unit = blog.trace(throwable)
-      //           override def info(s: String): Unit = blog.info(s)
-      //         }, () => blog.stopQuietly())
-      //      }
-      //
-      //      val logTest = {_: TestDefinition => streams.value.log }
-      //      val buffered = logBuffered.value
-      ////      Seq(new TestLogger(new TestLogging(wrap(logger), tdef => contentLogger(logTest(tdef), buffered)))) // FIXME
-      //      Seq(new testing.Logger {
-      //
-      //      })
-      //    },
-
-      // -v Log "test run started" / "test started" / "test run finished" events on log level "info" instead of "debug".
-      // -a Show stack traces and exception class name for AssertionErrors.
-      testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")) ++
+      testOptions in Test += Tests.Argument("-oDF")) ++
       mavenLocalResolverSettings ++
-      JUnitFileReporting.settings ++
       docLintingSettings
 
   lazy val docLintingSettings = Seq(

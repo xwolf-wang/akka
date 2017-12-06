@@ -3,7 +3,6 @@
  */
 package akka
 
-import akka.TestExtras.Filter
 import akka.TestExtras.Filter.Keys._
 import com.typesafe.sbt.{ SbtScalariform, SbtMultiJvm }
 import com.typesafe.sbt.SbtMultiJvm.MultiJvmKeys._
@@ -43,7 +42,7 @@ object MultiNode extends AutoPlugin {
     // -DMultiJvm.akka.cluster.Stress.nrOfNodes=15
     val MultinodeJvmArgs = "multinode\\.(D|X)(.*)".r
     val knownPrefix = Set("multnode.", "akka.", "MultiJvm.")
-    val akkaProperties = System.getProperties.propertyNames.asScala.toList.collect {
+    val akkaProperties = System.getProperties.stringPropertyNames.asScala.toList.collect {
       case MultinodeJvmArgs(a, b) ⇒
         val value = System.getProperty("multinode." + a + b)
         "-" + a + b + (if (value == "") "" else "=" + value)
@@ -70,13 +69,11 @@ object MultiNode extends AutoPlugin {
           (executeTests in Test) := {
             val testResults = (executeTests in Test).value
             val multiNodeResults = multiExecuteTests.value
-            //        // FIXME no idea what this was doing
-            //        val overall =
-            //          if (testResults.overall.id < multiNodeResults.overall.id)
-            //            multiNodeResults.overall
-            //          else
-            //            testResults.overall
-            val overall = testResults.overall
+            val overall =
+              if (testResults.overall.id < multiNodeResults.overall.id)
+                multiNodeResults.overall
+              else
+                testResults.overall
 
             Tests.Output(
               overall,
@@ -84,6 +81,14 @@ object MultiNode extends AutoPlugin {
               testResults.summaries ++ multiNodeResults.summaries)
           }
         } else Nil)
+
+  implicit class TestResultOps(val self: TestResult) extends AnyVal {
+    def id: Int = self match {
+      case TestResult.Passed ⇒ 0
+      case TestResult.Failed ⇒ 1
+      case TestResult.Error  ⇒ 2
+    }
+  }
 }
 
 /**

@@ -9,7 +9,7 @@ import scala.reflect.ClassTag
 
 import akka.util.OptionVal
 import akka.japi.function.{ Function2 ⇒ JapiFunction2 }
-import akka.japi.function.Procedure2
+import akka.japi.function.{ Procedure, Procedure2 }
 import akka.japi.pf.PFBuilder
 
 import akka.typed.Behavior
@@ -180,16 +180,25 @@ object Actor {
    * Constructs an actor behavior builder that can build a behavior that can react to both
    * incoming messages and lifecycle signals.
    *
-   * This constructor is called immutable because the behavior instance doesn't
-   * have or close over any mutable state. Processing the next message
-   * results in a new behavior that can potentially be different from this one.
-   * State is updated by returning a new behavior that holds the new immutable
-   * state. If no change is desired, use {@link #same}.
+   * This constructor is called immutable because the behavior instance does not
+   * need and in fact should not use (close over) mutable variables, but instead
+   * return a potentially different behavior encapsulating any state changes.
+   * If no change is desired, use {@link #same}.
    *
    * @param type the supertype of all messages accepted by this behavior
    * @return the behavior builder
    */
   def immutable[T](`type`: Class[T]): BehaviorBuilder[T] = BehaviorBuilder.create[T]
+
+  /**
+   * Construct an actor behavior that can react to lifecycle signals only.
+   */
+  def onSignal[T](handler: JapiFunction2[ActorContext[T], Signal, Behavior[T]]): Behavior[T] = {
+    val jSame = new JapiFunction2[ActorContext[T], T, Behavior[T]] {
+      override def apply(ctx: ActorContext[T], msg: T) = same
+    }
+    immutable(jSame, handler)
+  }
 
   /**
    * This type of Behavior wraps another Behavior while allowing you to perform

@@ -27,14 +27,13 @@ import akka.cluster.ClusterSettings.DataCenter
  * @see [[ClusterSharding$ ClusterSharding extension]]
  */
 object ShardRegion {
-
   /**
    * INTERNAL API
    * Factory method for the [[akka.actor.Props]] of the [[ShardRegion]] actor.
    */
   private[akka] def props(
     typeName:           String,
-    entityProps:        Props,
+    entityPropsFactory: String ⇒ Props,
     settings:           ClusterShardingSettings,
     coordinatorPath:    String,
     extractEntityId:    ShardRegion.ExtractEntityId,
@@ -42,7 +41,7 @@ object ShardRegion {
     handOffStopMessage: Any,
     replicator:         ActorRef,
     majorityMinCap:     Int): Props =
-    Props(new ShardRegion(typeName, Some(entityProps), dataCenter = None, settings, coordinatorPath, extractEntityId,
+    Props(new ShardRegion(typeName, Some(entityPropsFactory), dataCenter = None, settings, coordinatorPath, extractEntityId,
       extractShardId, handOffStopMessage, replicator, majorityMinCap)).withDeploy(Deploy.local)
 
   /**
@@ -367,7 +366,7 @@ object ShardRegion {
  */
 private[akka] class ShardRegion(
   typeName:           String,
-  entityProps:        Option[Props],
+  entityPropsFactory: Option[String ⇒ Props],
   dataCenter:         Option[DataCenter],
   settings:           ClusterShardingSettings,
   coordinatorPath:    String,
@@ -407,8 +406,12 @@ private[akka] class ShardRegion(
   CoordinatedShutdown(context.system).addTask(
     CoordinatedShutdown.PhaseClusterShardingShutdownRegion,
     "region-shutdown") { () ⇒
-      self ! GracefulShutdown
-      gracefulShutdownProgress.future
+      if (cluster.isTerminated || cluster.selfMember.status == MemberStatus.Down) {
+        Future.successful(Done)
+      } else {
+        self ! GracefulShutdown
+        gracefulShutdownProgress.future
+      }
     }
 
   // subscribe to MemberEvent, re-subscribe when restart
@@ -679,7 +682,7 @@ private[akka] class ShardRegion(
   }
 
   def registrationMessage: Any =
-    if (entityProps.isDefined) Register(self) else RegisterProxy(self)
+    if (entityPropsFactory.isDefined) Register(self) else RegisterProxy(self)
 
   def requestShardBufferHomes(): Unit = {
     shardBuffers.foreach {
@@ -796,7 +799,7 @@ private[akka] class ShardRegion(
       None
     else {
       shards.get(id).orElse(
-        entityProps match {
+        entityPropsFactory match {
           case Some(props) if !shardsByRef.values.exists(_ == id) ⇒
             log.debug("Starting shard [{}] in region", id)
 
@@ -805,7 +808,7 @@ private[akka] class ShardRegion(
               Shard.props(
                 typeName,
                 id,
-                props,
+                props(id),
                 settings,
                 extractEntityId,
                 extractShardId,

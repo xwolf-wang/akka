@@ -4,18 +4,21 @@
 package akka.testkit
 
 import language.postfixOps
-import scala.annotation.{ tailrec }
+import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import scala.reflect.ClassTag
 import java.util.concurrent._
 import java.util.concurrent.atomic.AtomicInteger
+
 import akka.actor._
-import akka.util.{ Timeout, BoxedType }
+import akka.util.{ BoxedType, OptionVal, Timeout }
+
 import scala.util.control.NonFatal
 import scala.Some
 import java.util.concurrent.TimeUnit
+
 import akka.actor.IllegalActorStateException
 import akka.actor.DeadLetter
 import akka.actor.Terminated
@@ -283,7 +286,9 @@ trait TestKitBase {
   }
 
   /**
-   * Evaluate the given assert every `interval` until it does not throw an exception.
+   * Evaluate the given assert every `interval` until it does not throw an exception and return the
+   * result.
+   *
    * If the `max` timeout expires the last exception is thrown.
    *
    * If no timeout is given, take it from the innermost enclosing `within`
@@ -292,19 +297,29 @@ trait TestKitBase {
    * Note that the timeout is scaled using Duration.dilated,
    * which uses the configuration entry "akka.test.timefactor".
    */
-  def awaitAssert(a: ⇒ Any, max: Duration = Duration.Undefined, interval: Duration = 100.millis) {
+  def awaitAssert[A](a: ⇒ A, max: Duration = Duration.Undefined, interval: Duration = 100.millis): A = {
     val _max = remainingOrDilated(max)
     val stop = now + _max
 
     @tailrec
-    def poll(t: Duration) {
-      val failed =
-        try { a; false } catch {
+    def poll(t: Duration): A = {
+      // cannot use null-ness of result as signal it failed
+      // because Java API and not wanting to return a value will be "return null"
+      var failed = false
+      val result: A =
+        try {
+          val aRes = a
+          failed = false
+          aRes
+        } catch {
           case NonFatal(e) ⇒
+            failed = true
             if ((now + t) >= stop) throw e
-            true
+            else null.asInstanceOf[A]
         }
-      if (failed) {
+
+      if (!failed) result
+      else {
         Thread.sleep(t.toMillis)
         poll((stop - now) min interval)
       }
@@ -625,16 +640,48 @@ trait TestKitBase {
   /**
    * Same as `expectNoMsg(remainingOrDefault)`, but correctly treating the timeFactor.
    */
+  @deprecated(message = "Use expectNoMessage instead", since = "2.5.5")
   def expectNoMsg() { expectNoMsg_internal(remainingOrDefault) }
 
   /**
    * Assert that no message is received for the specified time.
+   * NOTE! Supplied value is always dilated.
    */
-  def expectNoMsg(max: FiniteDuration) { expectNoMsg_internal(max.dilated) }
+  @deprecated(message = "Use expectNoMessage instead", since = "2.5.5")
+  def expectNoMsg(max: FiniteDuration) {
+    expectNoMsg_internal(max.dilated)
+  }
+
+  /**
+   * Assert that no message is received for the specified time.
+   * Supplied value is not dilated.
+   */
+  def expectNoMessage(max: FiniteDuration) = {
+    expectNoMsg_internal(max)
+  }
 
   private def expectNoMsg_internal(max: FiniteDuration) {
-    val o = receiveOne(max)
-    assert(o eq null, s"received unexpected message $o")
+    val finish = System.nanoTime() + max.toNanos
+    val pollInterval = 100.millis
+
+    def leftNow = (finish - System.nanoTime()).nanos
+
+    var elem: AnyRef = queue.peekFirst()
+    var left = leftNow
+    while (left.toNanos > 0 && elem == null) {
+      //Use of (left / 2) gives geometric series limited by finish time similar to (1/2)^n limited by 1,
+      //so it is very precise
+      Thread.sleep(
+        pollInterval.toMillis min (left / 2).toMillis
+      )
+      left = leftNow
+      if (left.toNanos > 0) {
+        elem = queue.peekFirst()
+      }
+    }
+    val diff = (max.toNanos - left.toNanos).nanos
+    val m = s"received unexpected message $elem after ${diff.toMillis} millis"
+    assert(elem eq null, m)
     lastWasNoMsg = true
   }
 
@@ -882,7 +929,7 @@ object TestKit {
         val msg = "Failed to stop [%s] within [%s] \n%s".format(actorSystem.name, duration,
           actorSystem.asInstanceOf[ActorSystemImpl].printTree)
         if (verifySystemShutdown) throw new RuntimeException(msg)
-        else actorSystem.log.warning(msg)
+        else println(msg)
     }
   }
 }

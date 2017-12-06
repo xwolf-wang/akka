@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets
 import java.util.Optional
 import java.util.concurrent.TimeUnit
 
+import akka.Done
 import akka.actor._
 import akka.dispatch.Dispatchers
 import akka.remote.routing.RemoteRouterConfig
@@ -43,6 +44,7 @@ class MiscMessageSerializer(val system: ExtendedActorSystem) extends SerializerW
     case PoisonPill                           ⇒ ParameterlessSerializedMessage
     case Kill                                 ⇒ ParameterlessSerializedMessage
     case RemoteWatcher.Heartbeat              ⇒ ParameterlessSerializedMessage
+    case Done                                 ⇒ ParameterlessSerializedMessage
     case hbrsp: RemoteWatcher.HeartbeatRsp    ⇒ serializeHeartbeatRsp(hbrsp)
     case rs: RemoteScope                      ⇒ serializeRemoteScope(rs)
     case LocalScope                           ⇒ ParameterlessSerializedMessage
@@ -253,6 +255,7 @@ class MiscMessageSerializer(val system: ExtendedActorSystem) extends SerializerW
   private val PoisonPillManifest = "P"
   private val KillManifest = "K"
   private val RemoteWatcherHBManifest = "RWHB"
+  private val DoneManifest = "DONE"
   private val RemoteWatcherHBRespManifest = "RWHR"
   private val ActorInitializationExceptionManifest = "AIEX"
   private val LocalScopeManifest = "LS"
@@ -281,6 +284,7 @@ class MiscMessageSerializer(val system: ExtendedActorSystem) extends SerializerW
     PoisonPillManifest → ((_) ⇒ PoisonPill),
     KillManifest → ((_) ⇒ Kill),
     RemoteWatcherHBManifest → ((_) ⇒ RemoteWatcher.Heartbeat),
+    DoneManifest → ((_) ⇒ Done),
     RemoteWatcherHBRespManifest → deserializeHeartbeatRsp,
     ActorInitializationExceptionManifest → deserializeActorInitializationException,
     LocalScopeManifest → ((_) ⇒ LocalScope),
@@ -311,6 +315,7 @@ class MiscMessageSerializer(val system: ExtendedActorSystem) extends SerializerW
       case PoisonPill                         ⇒ PoisonPillManifest
       case Kill                               ⇒ KillManifest
       case RemoteWatcher.Heartbeat            ⇒ RemoteWatcherHBManifest
+      case Done                               ⇒ DoneManifest
       case _: RemoteWatcher.HeartbeatRsp      ⇒ RemoteWatcherHBRespManifest
       case LocalScope                         ⇒ LocalScopeManifest
       case _: RemoteScope                     ⇒ RemoteScopeManifest
@@ -436,8 +441,8 @@ class MiscMessageSerializer(val system: ExtendedActorSystem) extends SerializerW
     BroadcastPool(
       nrOfInstances = bp.getNrOfInstances,
       resizer =
-      if (bp.hasResizer) Some(payloadSupport.deserializePayload(bp.getResizer).asInstanceOf[Resizer])
-      else None,
+        if (bp.hasResizer) Some(payloadSupport.deserializePayload(bp.getResizer).asInstanceOf[Resizer])
+        else None,
       routerDispatcher = if (bp.hasRouterDispatcher) bp.getRouterDispatcher else Dispatchers.DefaultDispatcherId,
       usePoolDispatcher = bp.getUsePoolDispatcher
     )
@@ -448,8 +453,8 @@ class MiscMessageSerializer(val system: ExtendedActorSystem) extends SerializerW
     RandomPool(
       nrOfInstances = rp.getNrOfInstances,
       resizer =
-      if (rp.hasResizer) Some(payloadSupport.deserializePayload(rp.getResizer).asInstanceOf[Resizer])
-      else None,
+        if (rp.hasResizer) Some(payloadSupport.deserializePayload(rp.getResizer).asInstanceOf[Resizer])
+        else None,
       routerDispatcher = if (rp.hasRouterDispatcher) rp.getRouterDispatcher else Dispatchers.DefaultDispatcherId,
       usePoolDispatcher = rp.getUsePoolDispatcher
     )
@@ -460,8 +465,8 @@ class MiscMessageSerializer(val system: ExtendedActorSystem) extends SerializerW
     RoundRobinPool(
       nrOfInstances = rp.getNrOfInstances,
       resizer =
-      if (rp.hasResizer) Some(payloadSupport.deserializePayload(rp.getResizer).asInstanceOf[Resizer])
-      else None,
+        if (rp.hasResizer) Some(payloadSupport.deserializePayload(rp.getResizer).asInstanceOf[Resizer])
+        else None,
       routerDispatcher = if (rp.hasRouterDispatcher) rp.getRouterDispatcher else Dispatchers.DefaultDispatcherId,
       usePoolDispatcher = rp.getUsePoolDispatcher
     )
@@ -472,8 +477,8 @@ class MiscMessageSerializer(val system: ExtendedActorSystem) extends SerializerW
     ScatterGatherFirstCompletedPool(
       nrOfInstances = sgp.getGeneric.getNrOfInstances,
       resizer =
-      if (sgp.getGeneric.hasResizer) Some(payloadSupport.deserializePayload(sgp.getGeneric.getResizer).asInstanceOf[Resizer])
-      else None,
+        if (sgp.getGeneric.hasResizer) Some(payloadSupport.deserializePayload(sgp.getGeneric.getResizer).asInstanceOf[Resizer])
+        else None,
       within = deserializeFiniteDuration(sgp.getWithin),
       routerDispatcher =
         if (sgp.getGeneric.hasRouterDispatcher) sgp.getGeneric.getRouterDispatcher
@@ -486,8 +491,8 @@ class MiscMessageSerializer(val system: ExtendedActorSystem) extends SerializerW
     TailChoppingPool(
       nrOfInstances = tcp.getGeneric.getNrOfInstances,
       resizer =
-      if (tcp.getGeneric.hasResizer) Some(payloadSupport.deserializePayload(tcp.getGeneric.getResizer).asInstanceOf[Resizer])
-      else None,
+        if (tcp.getGeneric.hasResizer) Some(payloadSupport.deserializePayload(tcp.getGeneric.getResizer).asInstanceOf[Resizer])
+        else None,
       routerDispatcher = if (tcp.getGeneric.hasRouterDispatcher) tcp.getGeneric.getRouterDispatcher else Dispatchers.DefaultDispatcherId,
       usePoolDispatcher = tcp.getGeneric.getUsePoolDispatcher,
       within = deserializeFiniteDuration(tcp.getWithin),

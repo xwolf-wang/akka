@@ -6,6 +6,8 @@ package akka.cluster.sharding
 import java.net.URLEncoder
 import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
+import java.util.function.{ Function ⇒ JFunction }
+
 import scala.concurrent.Await
 import akka.actor.Actor
 import akka.actor.ActorRef
@@ -19,7 +21,6 @@ import akka.actor.NoSerializationVerificationNeeded
 import akka.actor.PoisonPill
 import akka.actor.Props
 import akka.cluster.Cluster
-import akka.cluster.ddata.DistributedData
 import akka.cluster.singleton.ClusterSingletonManager
 import akka.pattern.BackoffSupervisor
 import akka.util.ByteString
@@ -27,10 +28,14 @@ import akka.pattern.ask
 import akka.dispatch.Dispatchers
 import akka.cluster.ddata.ReplicatorSettings
 import akka.cluster.ddata.Replicator
+
 import scala.util.control.NonFatal
 import akka.actor.Status
 import akka.cluster.ClusterSettings
 import akka.cluster.ClusterSettings.DataCenter
+
+import scala.collection.immutable
+import scala.collection.JavaConverters._
 
 /**
  * This extension provides sharding functionality of actors in a cluster.
@@ -61,15 +66,15 @@ import akka.cluster.ClusterSettings.DataCenter
  * tagged with a specific role. The `ShardRegion` is created with two application specific
  * functions to extract the entity identifier and the shard identifier from incoming messages.
  * A shard is a group of entities that will be managed together. For the first message in a
- * specific shard the `ShardRegion` request the location of the shard from a central coordinator,
- * the [[ShardCoordinator]]. The `ShardCoordinator` decides which `ShardRegion` that
+ * specific shard the `ShardRegion` requests the location of the shard from a central coordinator,
+ * the [[ShardCoordinator]]. The `ShardCoordinator` decides which `ShardRegion`
  * owns the shard. The `ShardRegion` receives the decided home of the shard
  * and if that is the `ShardRegion` instance itself it will create a local child
  * actor representing the entity and direct all messages for that entity to it.
  * If the shard home is another `ShardRegion` instance messages will be forwarded
  * to that `ShardRegion` instance instead. While resolving the location of a
  * shard incoming messages for that shard are buffered and later delivered when the
- * shard home is known. Subsequent messages to the resolved shard can be delivered
+ * shard location is known. Subsequent messages to the resolved shard can be delivered
  * to the target destination immediately without involving the `ShardCoordinator`.
  *
  * To make sure that at most one instance of a specific entity actor is running somewhere
@@ -100,7 +105,7 @@ import akka.cluster.ClusterSettings.DataCenter
  * persistent (durable), e.g. with `akka-persistence`, so that it can be recovered at the new
  * location.
  *
- * The logic that decides which shards to rebalance is defined in a pluggable shard
+ * The logic that decides which shards to rebalance is defined in a plugable shard
  * allocation strategy. The default implementation [[ShardCoordinator.LeastShardAllocationStrategy]]
  * picks shards for handoff from the `ShardRegion` with most number of previously allocated shards.
  * They will then be allocated to the `ShardRegion` with least number of previously allocated shards,
@@ -143,6 +148,7 @@ import akka.cluster.ClusterSettings.DataCenter
  *
  */
 object ClusterSharding extends ExtensionId[ClusterSharding] with ExtensionIdProvider {
+
   override def get(system: ActorSystem): ClusterSharding = super.get(system)
 
   override def lookup = ClusterSharding
@@ -163,12 +169,16 @@ class ClusterSharding(system: ExtendedActorSystem) extends Extension {
   private val cluster = Cluster(system)
 
   private val regions: ConcurrentHashMap[String, ActorRef] = new ConcurrentHashMap
+  private val proxies: ConcurrentHashMap[String, ActorRef] = new ConcurrentHashMap
+
   private lazy val guardian = {
-    val guardianName: String = system.settings.config.getString("akka.cluster.sharding.guardian-name")
-    val dispatcher = system.settings.config.getString("akka.cluster.sharding.use-dispatcher") match {
-      case "" ⇒ Dispatchers.DefaultDispatcherId
-      case id ⇒ id
-    }
+    val guardianName: String =
+      system.settings.config.getString("akka.cluster.sharding.guardian-name")
+    val dispatcher = system.settings.config
+      .getString("akka.cluster.sharding.use-dispatcher") match {
+        case "" ⇒ Dispatchers.DefaultDispatcherId
+        case id ⇒ id
+      }
     system.systemActorOf(Props[ClusterShardingGuardian].withDispatcher(dispatcher), guardianName)
   }
 
@@ -180,7 +190,7 @@ class ClusterSharding(system: ExtendedActorSystem) extends Extension {
   /**
    * Scala API: Register a named entity type by defining the [[akka.actor.Props]] of the entity actor
    * and functions to extract entity and shard identifier from messages. The [[ShardRegion]] actor
-   * for this type can later be retrieved with the [[#shardRegion]] method.
+   * for this type can later be retrieved with the [[shardRegion]] method.
    *
    * Some settings can be configured as described in the `akka.cluster.sharding` section
    * of the `reference.conf`.
@@ -210,7 +220,7 @@ class ClusterSharding(system: ExtendedActorSystem) extends Extension {
 
     requireClusterRole(settings.role)
     implicit val timeout = system.settings.CreationTimeout
-    val startMsg = Start(typeName, entityProps, settings,
+    val startMsg = Start(typeName, _ ⇒ entityProps, settings,
       extractEntityId, extractShardId, allocationStrategy, handOffStopMessage)
     val Started(shardRegion) = Await.result(guardian ? startMsg, timeout.duration)
     regions.put(typeName, shardRegion)
@@ -220,7 +230,7 @@ class ClusterSharding(system: ExtendedActorSystem) extends Extension {
   /**
    * Register a named entity type by defining the [[akka.actor.Props]] of the entity actor and
    * functions to extract entity and shard identifier from messages. The [[ShardRegion]] actor
-   * for this type can later be retrieved with the [[#shardRegion]] method.
+   * for this type can later be retrieved with the [[shardRegion]] method.
    *
    * The default shard allocation strategy [[ShardCoordinator.LeastShardAllocationStrategy]]
    * is used. [[akka.actor.PoisonPill]] is used as `handOffStopMessage`.
@@ -249,7 +259,7 @@ class ClusterSharding(system: ExtendedActorSystem) extends Extension {
       settings.tuningParameters.leastShardAllocationRebalanceThreshold,
       settings.tuningParameters.leastShardAllocationMaxSimultaneousRebalance)
 
-    start(typeName, entityProps, settings, extractEntityId, extractShardId, allocationStrategy, PoisonPill)
+    start(typeName, _ ⇒ entityProps, settings, extractEntityId, extractShardId, allocationStrategy, PoisonPill)
   }
 
   /**
@@ -279,14 +289,18 @@ class ClusterSharding(system: ExtendedActorSystem) extends Extension {
     allocationStrategy: ShardAllocationStrategy,
     handOffStopMessage: Any): ActorRef = {
 
-    start(typeName, entityProps, settings,
+    start(
+      typeName,
+      _ ⇒ entityProps,
+      settings,
       extractEntityId = {
-      case msg if messageExtractor.entityId(msg) ne null ⇒
-        (messageExtractor.entityId(msg), messageExtractor.entityMessage(msg))
-    },
+        case msg if messageExtractor.entityId(msg) ne null ⇒
+          (messageExtractor.entityId(msg), messageExtractor.entityMessage(msg))
+      },
       extractShardId = msg ⇒ messageExtractor.shardId(msg),
       allocationStrategy = allocationStrategy,
-      handOffStopMessage = handOffStopMessage)
+      handOffStopMessage = handOffStopMessage
+    )
   }
 
   /**
@@ -318,6 +332,154 @@ class ClusterSharding(system: ExtendedActorSystem) extends Extension {
       settings.tuningParameters.leastShardAllocationMaxSimultaneousRebalance)
 
     start(typeName, entityProps, settings, messageExtractor, allocationStrategy, PoisonPill)
+  }
+
+  /**
+   * Scala API: Register a named entity type by defining a factory for the [[akka.actor.Props]] of
+   * the entity actor and functions to extract entity and shard identifier from messages. The
+   * [[ShardRegion]] actor for this type can later be retrieved with the [[#shardRegion]] method.
+   *
+   * Some settings can be configured as described in the `akka.cluster.sharding` section
+   * of the `reference.conf`.
+   *
+   * @param typeName the name of the entity type
+   * @param entityPropsFactory function that, given an entity id, returns the `Props` of the entity actors
+   *  that will be created by the `ShardRegion`
+   * @param settings configuration settings, see [[ClusterShardingSettings]]
+   * @param extractEntityId partial function to extract the entity id and the message to send to the
+   *   entity from the incoming message, if the partial function does not match the message will
+   *   be `unhandled`, i.e. posted as `Unhandled` messages on the event stream
+   * @param extractShardId function to determine the shard id for an incoming message, only messages
+   *   that passed the `extractEntityId` will be used
+   * @param allocationStrategy possibility to use a custom shard allocation and
+   *   rebalancing logic
+   * @param handOffStopMessage the message that will be sent to entities when they are to be stopped
+   *   for a rebalance or graceful shutdown of a `ShardRegion`, e.g. `PoisonPill`.
+   * @return the actor ref of the [[ShardRegion]] that is to be responsible for the shard
+   */
+  def start(
+    typeName:           String,
+    entityPropsFactory: String ⇒ Props,
+    settings:           ClusterShardingSettings,
+    extractEntityId:    ShardRegion.ExtractEntityId,
+    extractShardId:     ShardRegion.ExtractShardId,
+    allocationStrategy: ShardAllocationStrategy,
+    handOffStopMessage: Any): ActorRef = {
+
+    requireClusterRole(settings.role)
+    implicit val timeout = system.settings.CreationTimeout
+    val startMsg = Start(typeName, entityPropsFactory, settings,
+      extractEntityId, extractShardId, allocationStrategy, handOffStopMessage)
+    val Started(shardRegion) = Await.result(guardian ? startMsg, timeout.duration)
+    regions.put(typeName, shardRegion)
+    shardRegion
+  }
+
+  /**
+   * Scala API: Register a named entity type by defining a factory for the [[akka.actor.Props]] of
+   * the entity actor and functions to extract entity and shard identifier from messages. The
+   * [[ShardRegion]] actor for this type can later be retrieved with the [[#shardRegion]] method.
+   *
+   * The default shard allocation strategy [[ShardCoordinator.LeastShardAllocationStrategy]]
+   * is used. [[akka.actor.PoisonPill]] is used as `handOffStopMessage`.
+   *
+   * Some settings can be configured as described in the `akka.cluster.sharding` section
+   * of the `reference.conf`.
+   *
+   * @param typeName the name of the entity type
+   * @param entityPropsFactory function that, given an entity id, returns the `Props` of the entity actors
+   *  that will be created by the `ShardRegion`
+   * @param settings configuration settings, see [[ClusterShardingSettings]]
+   * @param extractEntityId partial function to extract the entity id and the message to send to the
+   *   entity from the incoming message, if the partial function does not match the message will
+   *   be `unhandled`, i.e. posted as `Unhandled` messages on the event stream
+   * @param extractShardId function to determine the shard id for an incoming message, only messages
+   *   that passed the `extractEntityId` will be used
+   * @return the actor ref of the [[ShardRegion]] that is to be responsible for the shard
+   */
+  def start(
+    typeName:           String,
+    entityPropsFactory: String ⇒ Props,
+    settings:           ClusterShardingSettings,
+    extractEntityId:    ShardRegion.ExtractEntityId,
+    extractShardId:     ShardRegion.ExtractShardId): ActorRef = {
+
+    val allocationStrategy = new LeastShardAllocationStrategy(
+      settings.tuningParameters.leastShardAllocationRebalanceThreshold,
+      settings.tuningParameters.leastShardAllocationMaxSimultaneousRebalance)
+
+    start(typeName, entityPropsFactory, settings, extractEntityId, extractShardId, allocationStrategy, PoisonPill)
+  }
+
+  /**
+   * Java/Scala API: Register a named entity type by defining a factory for the [[akka.actor.Props]] of
+   * the entity actor and functions to extract entity and shard identifier from messages. The
+   * [[ShardRegion]] actor for this type can later be retrieved with the [[#shardRegion]] method.
+   *
+   * Some settings can be configured as described in the `akka.cluster.sharding` section
+   * of the `reference.conf`.
+   *
+   * @param typeName the name of the entity type
+   * @param entityPropsFactory function that, given an entity id, returns the `Props` of the entity actors
+   *  that will be created by the `ShardRegion`
+   * @param settings configuration settings, see [[ClusterShardingSettings]]
+   * @param messageExtractor functions to extract the entity id, shard id, and the message to send to the
+   *   entity from the incoming message, see [[ShardRegion.MessageExtractor]]
+   * @param allocationStrategy possibility to use a custom shard allocation and
+   *   rebalancing logic
+   * @param handOffStopMessage the message that will be sent to entities when they are to be stopped
+   *   for a rebalance or graceful shutdown of a `ShardRegion`, e.g. `PoisonPill`.
+   * @return the actor ref of the [[ShardRegion]] that is to be responsible for the shard
+   */
+  def start(
+    typeName:           String,
+    entityPropsFactory: JFunction[String, Props],
+    settings:           ClusterShardingSettings,
+    messageExtractor:   ShardRegion.MessageExtractor,
+    allocationStrategy: ShardAllocationStrategy,
+    handOffStopMessage: Any): ActorRef = {
+
+    start(
+      typeName, entityPropsFactory.apply _, settings,
+      extractEntityId = {
+        case msg if messageExtractor.entityId(msg) ne null ⇒
+          (messageExtractor.entityId(msg), messageExtractor.entityMessage(msg))
+      }: ShardRegion.ExtractEntityId,
+      extractShardId = msg ⇒ messageExtractor.shardId(msg),
+      allocationStrategy = allocationStrategy,
+      handOffStopMessage = handOffStopMessage)
+  }
+
+  /**
+   * Java/Scala API: Register a named entity type by defining a factory for the [[akka.actor.Props]] of
+   * the entity actor and functions to extract entity and shard identifier from messages. The
+   * [[ShardRegion]] actor for this type can later be retrieved with the [[#shardRegion]] method.
+   *
+   * The default shard allocation strategy [[ShardCoordinator.LeastShardAllocationStrategy]]
+   * is used. [[akka.actor.PoisonPill]] is used as `handOffStopMessage`.
+   *
+   * Some settings can be configured as described in the `akka.cluster.sharding` section
+   * of the `reference.conf`.
+   *
+   * @param typeName the name of the entity type
+   * @param entityPropsFactory function that, given an entity id, returns the `Props` of the entity actors
+   *  that will be created by the `ShardRegion`
+   * @param settings configuration settings, see [[ClusterShardingSettings]]
+   * @param messageExtractor functions to extract the entity id, shard id, and the message to send to the
+   *   entity from the incoming message
+   * @return the actor ref of the [[ShardRegion]] that is to be responsible for the shard
+   */
+  def start(
+    typeName:           String,
+    entityPropsFactory: JFunction[String, Props],
+    settings:           ClusterShardingSettings,
+    messageExtractor:   ShardRegion.MessageExtractor): ActorRef = {
+
+    val allocationStrategy = new LeastShardAllocationStrategy(
+      settings.tuningParameters.leastShardAllocationRebalanceThreshold,
+      settings.tuningParameters.leastShardAllocationMaxSimultaneousRebalance)
+
+    start(typeName, entityPropsFactory, settings, messageExtractor, allocationStrategy, PoisonPill)
   }
 
   /**
@@ -379,14 +541,14 @@ class ClusterSharding(system: ExtendedActorSystem) extends Extension {
     val startMsg = StartProxy(typeName, dataCenter, settings, extractEntityId, extractShardId)
     val Started(shardRegion) = Await.result(guardian ? startMsg, timeout.duration)
     // it must be possible to start several proxies, one per data center
-    regions.put(proxyName(typeName, dataCenter), shardRegion)
+    proxies.put(proxyName(typeName, dataCenter), shardRegion)
     shardRegion
   }
 
   private def proxyName(typeName: String, dataCenter: Option[DataCenter]): String = {
     dataCenter match {
-      case None    ⇒ typeName
-      case Some(t) ⇒ typeName + "-" + t
+      case None    ⇒ s"${typeName}Proxy"
+      case Some(t) ⇒ s"${typeName}Proxy" + "-" + t
     }
   }
 
@@ -436,23 +598,45 @@ class ClusterSharding(system: ExtendedActorSystem) extends Extension {
     dataCenter:       Optional[String],
     messageExtractor: ShardRegion.MessageExtractor): ActorRef = {
 
-    startProxy(typeName, Option(role.orElse(null)), Option(dataCenter.orElse(null)),
+    startProxy(
+      typeName,
+      Option(role.orElse(null)),
+      Option(dataCenter.orElse(null)),
       extractEntityId = {
-      case msg if messageExtractor.entityId(msg) ne null ⇒
-        (messageExtractor.entityId(msg), messageExtractor.entityMessage(msg))
-    },
-      extractShardId = msg ⇒ messageExtractor.shardId(msg))
+        case msg if messageExtractor.entityId(msg) ne null ⇒
+          (messageExtractor.entityId(msg), messageExtractor.entityMessage(msg))
+      },
+      extractShardId = msg ⇒ messageExtractor.shardId(msg)
+    )
 
   }
+
+  /**
+   * Scala API: get all currently defined sharding type names.
+   */
+  def shardTypeNames: immutable.Set[String] = regions.keySet().asScala.toSet
+
+  /**
+   * Java API: get all currently defined sharding type names.
+   */
+  def getShardTypeNames: java.util.Set[String] = regions.keySet()
 
   /**
    * Retrieve the actor reference of the [[ShardRegion]] actor responsible for the named entity type.
    * The entity type must be registered with the [[#start]] or [[#startProxy]] method before it
    * can be used here. Messages to the entity is always sent via the `ShardRegion`.
    */
-  def shardRegion(typeName: String): ActorRef = regions.get(typeName) match {
-    case null ⇒ throw new IllegalArgumentException(s"Shard type [$typeName] must be started first")
-    case ref  ⇒ ref
+  def shardRegion(typeName: String): ActorRef = {
+    regions.get(typeName) match {
+      case null ⇒
+        proxies.get(proxyName(typeName, None)) match {
+          case null ⇒
+            throw new IllegalArgumentException(
+              s"Shard type [$typeName] must be started first")
+          case ref ⇒ ref
+        }
+      case ref ⇒ ref
+    }
   }
 
   /**
@@ -463,9 +647,11 @@ class ClusterSharding(system: ExtendedActorSystem) extends Extension {
    * via the `ShardRegion`.
    */
   def shardRegionProxy(typeName: String, dataCenter: DataCenter): ActorRef = {
-    regions.get(proxyName(typeName, Some(dataCenter))) match {
-      case null ⇒ throw new IllegalArgumentException(s"Shard type [$typeName] must be started first")
-      case ref  ⇒ ref
+    proxies.get(proxyName(typeName, Some(dataCenter))) match {
+      case null ⇒
+        throw new IllegalArgumentException(
+          s"Shard type [$typeName] must be started first")
+      case ref ⇒ ref
     }
   }
 
@@ -476,14 +662,24 @@ class ClusterSharding(system: ExtendedActorSystem) extends Extension {
  */
 private[akka] object ClusterShardingGuardian {
   import ShardCoordinator.ShardAllocationStrategy
-  final case class Start(typeName: String, entityProps: Props, settings: ClusterShardingSettings,
-                         extractEntityId: ShardRegion.ExtractEntityId, extractShardId: ShardRegion.ExtractShardId,
-                         allocationStrategy: ShardAllocationStrategy, handOffStopMessage: Any)
+  final case class Start(
+    typeName:           String,
+    entityPropsFactory: String ⇒ Props,
+    settings:           ClusterShardingSettings,
+    extractEntityId:    ShardRegion.ExtractEntityId,
+    extractShardId:     ShardRegion.ExtractShardId,
+    allocationStrategy: ShardAllocationStrategy,
+    handOffStopMessage: Any)
     extends NoSerializationVerificationNeeded
-  final case class StartProxy(typeName: String, dataCenter: Option[DataCenter], settings: ClusterShardingSettings,
-                              extractEntityId: ShardRegion.ExtractEntityId, extractShardId: ShardRegion.ExtractShardId)
+  final case class StartProxy(
+    typeName:        String,
+    dataCenter:      Option[DataCenter],
+    settings:        ClusterShardingSettings,
+    extractEntityId: ShardRegion.ExtractEntityId,
+    extractShardId:  ShardRegion.ExtractShardId)
     extends NoSerializationVerificationNeeded
-  final case class Started(shardRegion: ActorRef) extends NoSerializationVerificationNeeded
+  final case class Started(shardRegion: ActorRef)
+    extends NoSerializationVerificationNeeded
 }
 
 /**
@@ -496,11 +692,10 @@ private[akka] class ClusterShardingGuardian extends Actor {
   val cluster = Cluster(context.system)
   val sharding = ClusterSharding(context.system)
 
-  val majorityMinCap = context.system.settings.config.getInt(
-    "akka.cluster.sharding.distributed-data.majority-min-cap")
+  val majorityMinCap = context.system.settings.config
+    .getInt("akka.cluster.sharding.distributed-data.majority-min-cap")
   private lazy val replicatorSettings =
-    ReplicatorSettings(context.system.settings.config.getConfig(
-      "akka.cluster.sharding.distributed-data"))
+    ReplicatorSettings(context.system.settings.config.getConfig("akka.cluster.sharding.distributed-data"))
   private var replicatorByRole = Map.empty[Option[String], ActorRef]
 
   private def coordinatorSingletonManagerName(encName: String): String =
@@ -520,8 +715,11 @@ private[akka] class ClusterShardingGuardian extends Actor {
             case None    ⇒ "replicator"
           }
           // Use members within the data center and with the given role (if any)
-          val replicatorRoles = Set(ClusterSettings.DcRolePrefix + cluster.settings.SelfDataCenter) ++ settings.role
-          val ref = context.actorOf(Replicator.props(replicatorSettings.withRoles(replicatorRoles)), name)
+          val replicatorRoles = Set(
+            ClusterSettings.DcRolePrefix + cluster.settings.SelfDataCenter) ++ settings.role
+          val ref = context.actorOf(
+            Replicator.props(replicatorSettings.withRoles(replicatorRoles)),
+            name)
           replicatorByRole = replicatorByRole.updated(settings.role, ref)
           ref
       }
@@ -530,7 +728,13 @@ private[akka] class ClusterShardingGuardian extends Actor {
   }
 
   def receive = {
-    case Start(typeName, entityProps, settings, extractEntityId, extractShardId, allocationStrategy, handOffStopMessage) ⇒
+    case Start(typeName,
+      entityPropsFactory,
+      settings,
+      extractEntityId,
+      extractShardId,
+      allocationStrategy,
+      handOffStopMessage) ⇒
       try {
         import settings.role
         import settings.tuningParameters.coordinatorFailureBackoff
@@ -544,37 +748,39 @@ private[akka] class ClusterShardingGuardian extends Actor {
             val coordinatorProps =
               if (settings.stateStoreMode == ClusterShardingSettings.StateStoreModePersistence)
                 ShardCoordinator.props(typeName, settings, allocationStrategy)
-              else {
+              else
                 ShardCoordinator.props(typeName, settings, allocationStrategy, rep, majorityMinCap)
-              }
             val singletonProps = BackoffSupervisor.props(
               childProps = coordinatorProps,
               childName = "coordinator",
               minBackoff = coordinatorFailureBackoff,
               maxBackoff = coordinatorFailureBackoff * 5,
-              randomFactor = 0.2).withDeploy(Deploy.local)
+              randomFactor = 0.2)
+              .withDeploy(Deploy.local)
             val singletonSettings = settings.coordinatorSingletonSettings
-              .withSingletonName("singleton").withRole(role)
+              .withSingletonName("singleton")
+              .withRole(role)
             context.actorOf(
-              ClusterSingletonManager.props(
-                singletonProps,
-                terminationMessage = PoisonPill,
-                singletonSettings).withDispatcher(context.props.dispatcher),
+              ClusterSingletonManager.props(singletonProps, terminationMessage = PoisonPill, singletonSettings)
+                .withDispatcher(context.props.dispatcher),
               name = cName)
           }
 
           context.actorOf(
             ShardRegion.props(
               typeName = typeName,
-              entityProps = entityProps,
+              entityPropsFactory = entityPropsFactory,
               settings = settings,
               coordinatorPath = cPath,
               extractEntityId = extractEntityId,
               extractShardId = extractShardId,
               handOffStopMessage = handOffStopMessage,
               replicator = rep,
-              majorityMinCap).withDispatcher(context.props.dispatcher),
-            name = encName)
+              majorityMinCap
+            )
+              .withDispatcher(context.props.dispatcher),
+            name = encName
+          )
         }
         sender() ! Started(shardRegion)
       } catch {
@@ -585,12 +791,15 @@ private[akka] class ClusterShardingGuardian extends Actor {
           sender() ! Status.Failure(e)
       }
 
-    case StartProxy(typeName, dataCenter, settings, extractEntityId, extractShardId) ⇒
+    case StartProxy(typeName,
+      dataCenter,
+      settings,
+      extractEntityId,
+      extractShardId) ⇒
       try {
-
-        val encName = URLEncoder.encode(typeName, ByteString.UTF_8)
+        val encName = URLEncoder.encode(s"${typeName}Proxy", ByteString.UTF_8)
         val cName = coordinatorSingletonManagerName(encName)
-        val cPath = coordinatorPath(encName)
+        val cPath = coordinatorPath(URLEncoder.encode(typeName, ByteString.UTF_8))
         // it must be possible to start several proxies, one per data center
         val actorName = dataCenter match {
           case None    ⇒ encName
@@ -606,8 +815,11 @@ private[akka] class ClusterShardingGuardian extends Actor {
               extractEntityId = extractEntityId,
               extractShardId = extractShardId,
               replicator = context.system.deadLetters,
-              majorityMinCap).withDispatcher(context.props.dispatcher),
-            name = actorName)
+              majorityMinCap
+            )
+              .withDispatcher(context.props.dispatcher),
+            name = actorName
+          )
         }
         sender() ! Started(shardRegion)
       } catch {
@@ -620,4 +832,3 @@ private[akka] class ClusterShardingGuardian extends Actor {
   }
 
 }
-

@@ -4,15 +4,17 @@
 package akka.typed
 package internal
 
-import akka.actor.InvalidActorNameException
+import akka.actor.{ Cancellable, InvalidActorNameException, InvalidMessageException }
 import akka.util.Helpers
+
 import scala.concurrent.duration.FiniteDuration
 import akka.dispatch.ExecutionContexts
+
 import scala.concurrent.ExecutionContextExecutor
-import akka.actor.Cancellable
 import akka.util.Unsafe.{ instance ⇒ unsafe }
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.Queue
+
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import scala.util.control.Exception.Catcher
@@ -20,6 +22,7 @@ import akka.event.Logging.Error
 import akka.event.Logging
 import akka.typed.Behavior.StoppedBehavior
 import akka.util.OptionVal
+import akka.typed.Behavior.UntypedBehavior
 
 /**
  * INTERNAL API
@@ -104,6 +107,8 @@ private[typed] class ActorCell[T](
   protected def ctx: ActorContext[T] = this
 
   override def spawn[U](behavior: Behavior[U], name: String, props: Props): ActorRef[U] = {
+    if (behavior.isInstanceOf[UntypedBehavior[_]])
+      throw new IllegalArgumentException(s"${behavior.getClass.getName} requires untyped ActorSystem")
     if (childrenMap contains name) throw InvalidActorNameException(s"actor name [$name] is not unique")
     if (terminatingMap contains name) throw InvalidActorNameException(s"actor name [$name] is not yet free")
     val dispatcher = props.firstOrElse[DispatcherSelector](DispatcherFromExecutionContext(executionContext))
@@ -195,7 +200,8 @@ private[typed] class ActorCell[T](
       publish(Error(e, self.path.toString, getClass, "swallowing exception during message send"))
   }
 
-  def send(msg: T): Unit =
+  def send(msg: T): Unit = {
+    if (msg == null) throw new InvalidMessageException("[null] is not an allowed message")
     try {
       val old = unsafe.getAndAddInt(this, statusOffset, 1)
       val oldActivations = activations(old)
@@ -221,6 +227,7 @@ private[typed] class ActorCell[T](
         }
       }
     } catch handleException
+  }
 
   def sendSystem(signal: SystemMessage): Unit = {
     @tailrec def needToActivate(): Boolean = {

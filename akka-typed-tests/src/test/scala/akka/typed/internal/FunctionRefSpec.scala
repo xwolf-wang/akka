@@ -4,7 +4,9 @@
 package akka.typed
 package internal
 
-import scala.concurrent.{ Promise, Future }
+import akka.actor.InvalidMessageException
+
+import scala.concurrent.{ Future, Promise }
 
 class FunctionRefSpec extends TypedSpecSetup {
 
@@ -26,7 +28,7 @@ class FunctionRefSpec extends TypedSpecSetup {
       val ref = ActorRef(f)
       ref ! "42"
       ref ! "43"
-      target.receiveAll() should ===(Left(Watch(target, ref)) :: Right("42") :: Right("43") :: Nil)
+      target.receiveAll() should ===(Right("42") :: Right("43") :: Nil)
     }
 
     def `must forward messages that are received before getting the ActorRef`(): Unit = {
@@ -157,6 +159,16 @@ class FunctionRefSpec extends TypedSpecSetup {
       client2.receiveSignal() should ===(DeathWatchNotification(ref, null))
       client2.hasSomething should ===(false)
       client1.hasSomething should ===(false)
+    }
+
+    def `must not allow null messages`(): Unit = {
+      val p = Promise[ActorRef[String]]
+      val ref = ActorRef(p.future)
+
+      intercept[InvalidMessageException] {
+        ref ! null
+      }
+
     }
 
   }

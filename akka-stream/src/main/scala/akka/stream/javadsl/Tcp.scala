@@ -5,9 +5,12 @@ package akka.stream.javadsl
 
 import java.lang.{ Iterable ⇒ JIterable }
 import java.util.Optional
-import akka.NotUsed
+
+import akka.{ Done, NotUsed }
+
 import scala.concurrent.duration._
 import java.net.InetSocketAddress
+
 import akka.actor.ActorSystem
 import akka.actor.ExtendedActorSystem
 import akka.actor.ExtensionId
@@ -17,16 +20,21 @@ import akka.stream.scaladsl
 import akka.util.ByteString
 import akka.japi.Util.immutableSeq
 import akka.io.Inet.SocketOption
+
 import scala.compat.java8.OptionConverters._
 import scala.compat.java8.FutureConverters._
 import java.util.concurrent.CompletionStage
+
+import akka.annotation.InternalApi
 
 object Tcp extends ExtensionId[Tcp] with ExtensionIdProvider {
 
   /**
    * Represents a prospective TCP server binding.
+   *
+   * Not indented for user construction
    */
-  class ServerBinding private[akka] (delegate: scaladsl.Tcp.ServerBinding) {
+  final class ServerBinding @InternalApi private[akka] (delegate: scaladsl.Tcp.ServerBinding) {
     /**
      * The local address of the endpoint bound by the materialization of the `connections` [[Source]].
      */
@@ -39,6 +47,11 @@ object Tcp extends ExtensionId[Tcp] with ExtensionIdProvider {
      * The produced [[java.util.concurrent.CompletionStage]] is fulfilled when the unbinding has been completed.
      */
     def unbind(): CompletionStage[Unit] = delegate.unbind().toJava
+
+    /**
+     * @return A completion stage that is completed when manually unbound, or failed if the server fails
+     */
+    def whenUnbound(): CompletionStage[Done] = delegate.whenUnbound.toJava
   }
 
   /**
@@ -147,6 +160,10 @@ class Tcp(system: ExtendedActorSystem) extends akka.actor.Extension {
   /**
    * Creates an [[Tcp.OutgoingConnection]] instance representing a prospective TCP client connection to the given endpoint.
    *
+   * Note that the ByteString chunk boundaries are not retained across the network,
+   * to achieve application level chunks you have to introduce explicit framing in your streams,
+   * for example using the [[Framing]] stages.
+   *
    * @param remoteAddress The remote address to connect to
    * @param localAddress  Optional local address for the connection
    * @param options   TCP options for the connections, see [[akka.io.Tcp]] for details
@@ -173,6 +190,10 @@ class Tcp(system: ExtendedActorSystem) extends akka.actor.Extension {
   /**
    * Creates an [[Tcp.OutgoingConnection]] without specifying options.
    * It represents a prospective TCP client connection to the given endpoint.
+   *
+   * Note that the ByteString chunk boundaries are not retained across the network,
+   * to achieve application level chunks you have to introduce explicit framing in your streams,
+   * for example using the [[Framing]] stages.
    */
   def outgoingConnection(host: String, port: Int): Flow[ByteString, ByteString, CompletionStage[OutgoingConnection]] =
     Flow.fromGraph(delegate.outgoingConnection(new InetSocketAddress(host, port))

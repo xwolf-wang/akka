@@ -176,7 +176,7 @@ private[cluster] final class ClusterDaemon(settings: ClusterSettings) extends Ac
   coordShutdown.addTask(CoordinatedShutdown.PhaseClusterLeave, "leave") {
     val sys = context.system
     () ⇒
-      if (Cluster(sys).isTerminated)
+      if (Cluster(sys).isTerminated || Cluster(sys).selfMember.status == Down)
         Future.successful(Done)
       else {
         implicit val timeout = Timeout(coordShutdown.timeout(CoordinatedShutdown.PhaseClusterLeave))
@@ -190,8 +190,8 @@ private[cluster] final class ClusterDaemon(settings: ClusterSettings) extends Ac
   override def postStop(): Unit = {
     clusterShutdown.trySuccess(Done)
     if (Cluster(context.system).settings.RunCoordinatedShutdownWhenDown) {
-      // run the last phases e.g. if node was downed (not leaving)
-      coordShutdown.run(Some(CoordinatedShutdown.PhaseClusterShutdown))
+      // if it was stopped due to leaving CoordinatedShutdown was started earlier
+      coordShutdown.run(CoordinatedShutdown.ClusterDowningReason)
     }
   }
 
@@ -325,7 +325,7 @@ private[cluster] class ClusterCoreDaemon(publisher: ActorRef) extends Actor with
   coordShutdown.addTask(CoordinatedShutdown.PhaseClusterExitingDone, "exiting-completed") {
     val sys = context.system
     () ⇒
-      if (Cluster(sys).isTerminated)
+      if (Cluster(sys).isTerminated || Cluster(sys).selfMember.status == Down)
         Future.successful(Done)
       else {
         implicit val timeout = Timeout(coordShutdown.timeout(CoordinatedShutdown.PhaseClusterExitingDone))
@@ -443,7 +443,7 @@ private[cluster] class ClusterCoreDaemon(publisher: ActorRef) extends Actor with
         "shutdown-after-unsuccessful-join-seed-nodes [{}]. Running CoordinatedShutdown.",
       seedNodes.mkString(", "), ShutdownAfterUnsuccessfulJoinSeedNodes)
     joinSeedNodesDeadline = None
-    CoordinatedShutdown(context.system).run()
+    CoordinatedShutdown(context.system).run(CoordinatedShutdown.ClusterDowningReason)
   }
 
   def becomeUninitialized(): Unit = {
@@ -792,10 +792,10 @@ private[cluster] class ClusterCoreDaemon(publisher: ActorRef) extends Actor with
 
   def receiveGossipStatus(status: GossipStatus): Unit = {
     val from = status.from
-    if (!latestGossip.isReachable(selfUniqueAddress, from))
+    if (!latestGossip.hasMember(from))
+      logInfo("Ignoring received gossip status from unknown [{}]", from)
+    else if (!latestGossip.isReachable(selfUniqueAddress, from))
       logInfo("Ignoring received gossip status from unreachable [{}] ", from)
-    else if (latestGossip.members.forall(_.uniqueAddress != from))
-      log.debug("Cluster Node [{}] - Ignoring received gossip status from unknown [{}]", selfAddress, from)
     else {
       (status.version compareTo latestGossip.version) match {
         case VectorClock.Same  ⇒ // same version
@@ -830,11 +830,11 @@ private[cluster] class ClusterCoreDaemon(publisher: ActorRef) extends Actor with
     } else if (envelope.to != selfUniqueAddress) {
       logInfo("Ignoring received gossip intended for someone else, from [{}] to [{}]", from.address, envelope.to)
       Ignored
+    } else if (!localGossip.hasMember(from)) {
+      logInfo("Ignoring received gossip from unknown [{}]", from)
+      Ignored
     } else if (!localGossip.isReachable(selfUniqueAddress, from)) {
       logInfo("Ignoring received gossip from unreachable [{}] ", from)
-      Ignored
-    } else if (localGossip.members.forall(_.uniqueAddress != from)) {
-      log.debug("Cluster Node [{}] - Ignoring received gossip from unknown [{}]", selfAddress, from)
       Ignored
     } else if (remoteGossip.members.forall(_.uniqueAddress != selfUniqueAddress)) {
       logInfo("Ignoring received gossip that does not contain myself, from [{}]", from)
@@ -886,10 +886,10 @@ private[cluster] class ClusterCoreDaemon(publisher: ActorRef) extends Actor with
         else winningGossip seen selfUniqueAddress)
       assertLatestGossip()
 
-      // for all new joining nodes we remove them from the failure detector
+      // for all new nodes we remove them from the failure detector
       latestGossip.members foreach {
         node ⇒
-          if (node.status == Joining && !localGossip.members(node)) {
+          if (!localGossip.members(node)) {
             failureDetector.remove(node.address)
             crossDcFailureDetector.remove(node.address)
           }
@@ -922,7 +922,7 @@ private[cluster] class ClusterCoreDaemon(publisher: ActorRef) extends Actor with
         exitingTasksInProgress = true
         logInfo("Exiting, starting coordinated shutdown")
         selfExiting.trySuccess(Done)
-        coordShutdown.run()
+        coordShutdown.run(CoordinatedShutdown.ClusterLeavingReason)
       }
 
       if (talkback) {
@@ -945,8 +945,12 @@ private[cluster] class ClusterCoreDaemon(publisher: ActorRef) extends Actor with
   def gossipSpeedupTick(): Unit =
     if (isGossipSpeedupNeeded) gossip()
 
-  def isGossipSpeedupNeeded: Boolean =
-    (latestGossip.overview.seen.size < latestGossip.members.size / 2)
+  def isGossipSpeedupNeeded: Boolean = {
+    if (latestGossip.isMultiDc)
+      latestGossip.overview.seen.count(membershipState.isInSameDc) < latestGossip.members.count(_.dataCenter == cluster.selfDataCenter) / 2
+    else
+      (latestGossip.overview.seen.size < latestGossip.members.size / 2)
+  }
 
   /**
    * Sends full gossip to `n` other random members.
@@ -970,6 +974,9 @@ private[cluster] class ClusterCoreDaemon(publisher: ActorRef) extends Actor with
           else
             gossipTo(peer)
         case None ⇒ // nothing to see here
+          if (cluster.settings.Debug.VerboseGossipLogging)
+            log.debug("Cluster Node [{}] dc [{}] will not gossip this round", selfAddress, cluster.settings.SelfDataCenter)
+
       }
     }
 
@@ -1098,7 +1105,7 @@ private[cluster] class ClusterCoreDaemon(publisher: ActorRef) extends Actor with
           exitingTasksInProgress = true
           logInfo("Exiting (leader), starting coordinated shutdown")
           selfExiting.trySuccess(Done)
-          coordShutdown.run()
+          coordShutdown.run(CoordinatedShutdown.ClusterLeavingReason)
         }
 
         exitingConfirmed = exitingConfirmed.filterNot(removedExitingConfirmed)

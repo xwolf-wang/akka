@@ -11,7 +11,7 @@ import sbt.Keys._
  */
 object VersionGenerator {
 
-  def versionSettings: Seq[Setting[_]] = inConfig(Compile)(Seq(
+  val settings: Seq[Setting[_]] = inConfig(Compile)(Seq(
     resourceGenerators += generateVersion(resourceManaged, _ / "version.conf",
       """|akka.version = "%s"
          |"""),

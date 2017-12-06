@@ -158,10 +158,14 @@ class ClusterSpec extends AkkaSpec(ClusterSpec.config) with ImplicitSender {
         Cluster(sys2).join(Cluster(sys2).selfAddress)
         probe.expectMsgType[MemberUp]
 
-        CoordinatedShutdown(sys2).run()
+        CoordinatedShutdown(sys2).run(CoordinatedShutdown.UnknownReason)
         probe.expectMsgType[MemberLeft]
-        probe.expectMsgType[MemberExited]
-        probe.expectMsgType[MemberRemoved]
+        // MemberExited might not be published before MemberRemoved
+        val removed = probe.fishForMessage() {
+          case _: MemberExited  ⇒ false
+          case _: MemberRemoved ⇒ true
+        }.asInstanceOf[MemberRemoved]
+        removed.previousStatus should ===(MemberStatus.Exiting)
       } finally {
         shutdown(sys2)
       }
@@ -183,10 +187,15 @@ class ClusterSpec extends AkkaSpec(ClusterSpec.config) with ImplicitSender {
 
         Cluster(sys2).leave(Cluster(sys2).selfAddress)
         probe.expectMsgType[MemberLeft]
-        probe.expectMsgType[MemberExited]
-        probe.expectMsgType[MemberRemoved]
+        // MemberExited might not be published before MemberRemoved
+        val removed = probe.fishForMessage() {
+          case _: MemberExited  ⇒ false
+          case _: MemberRemoved ⇒ true
+        }.asInstanceOf[MemberRemoved]
+        removed.previousStatus should ===(MemberStatus.Exiting)
         Await.result(sys2.whenTerminated, 10.seconds)
         Cluster(sys2).isTerminated should ===(true)
+        CoordinatedShutdown(sys2).shutdownReason() should ===(Some(CoordinatedShutdown.ClusterLeavingReason))
       } finally {
         shutdown(sys2)
       }
@@ -212,6 +221,7 @@ akka.loglevel=DEBUG
         probe.expectMsgType[MemberRemoved]
         Await.result(sys3.whenTerminated, 10.seconds)
         Cluster(sys3).isTerminated should ===(true)
+        CoordinatedShutdown(sys3).shutdownReason() should ===(Some(CoordinatedShutdown.ClusterDowningReason))
       } finally {
         shutdown(sys3)
       }

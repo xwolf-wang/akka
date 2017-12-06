@@ -4,21 +4,15 @@
 
 package akka.remote.artery
 
-import java.nio.charset.Charset
 import java.nio.{ ByteBuffer, ByteOrder }
 
-import akka.actor.{ ActorPath, ActorRef, Address, ChildActorPath }
+import akka.actor.ActorRef
 import akka.io.DirectByteBufferPool
-import akka.remote.artery.compress.CompressionProtocol._
-import akka.remote.artery.compress.{ CompressionTable, InboundCompressions }
+import akka.remote.artery.compress.{ CompressionTable, InboundCompressions, NoInboundCompressions }
 import akka.serialization.Serialization
+import akka.util.{ OptionVal, Unsafe }
+
 import org.agrona.concurrent.{ ManyToManyConcurrentArrayQueue, UnsafeBuffer }
-import akka.util.{ ByteString, CompactByteString, OptionVal, Unsafe }
-
-import akka.remote.artery.compress.NoInboundCompressions
-import akka.util.ByteString.ByteString1C
-
-import scala.annotation.tailrec
 
 /**
  * INTERNAL API
@@ -43,7 +37,8 @@ private[remote] class EnvelopeBufferPool(maximumPayload: Int, maximumBuffers: In
     }
   }
 
-  def release(buffer: EnvelopeBuffer) = if (!availableBuffers.offer(buffer)) buffer.tryCleanDirectByteBuffer()
+  def release(buffer: EnvelopeBuffer) =
+    if (buffer.byteBuffer.isDirect && !availableBuffers.offer(buffer)) buffer.tryCleanDirectByteBuffer()
 
 }
 
@@ -89,11 +84,6 @@ private[remote] object EnvelopeBuffer {
   // EITHER metadata followed by literals directly OR literals directly in this spot.
   // Mode depends on the `MetadataPresentFlag`.
   val MetadataContainerAndLiteralSectionOffset = 28 // Int
-
-  val UsAscii = Charset.forName("US-ASCII")
-
-  // accessing the internal char array of String when writing literal strings to ByteBuffer
-  val StringValueFieldOffset = Unsafe.instance.objectFieldOffset(classOf[String].getDeclaredField("value"))
 }
 
 /** INTERNAL API */
@@ -469,7 +459,8 @@ private[remote] final class EnvelopeBuffer(val byteBuffer: ByteBuffer) {
     else s
 
   private def readLiteral(): String = {
-    val length = byteBuffer.getShort
+    // Up-cast to Int to avoid up-casting 4 times.
+    val length = byteBuffer.getShort.asInstanceOf[Int]
     if (length == 0) ""
     else {
       ensureLiteralCharsLength(length)
@@ -492,20 +483,11 @@ private[remote] final class EnvelopeBuffer(val byteBuffer: ByteBuffer) {
       throw new IllegalArgumentException("Literals longer than 65535 cannot be encoded in the envelope")
 
     byteBuffer.putInt(tagOffset, byteBuffer.position())
-
-    if (length == 0) {
-      byteBuffer.putShort(0)
-    } else {
-      byteBuffer.putShort(length.toShort)
+    byteBuffer.putShort(length.toShort)
+    if (length > 0) {
       ensureLiteralCharsLength(length)
       val bytes = literalBytes
-      val chars = Unsafe.instance.getObject(literal, StringValueFieldOffset).asInstanceOf[Array[Char]]
-      var i = 0
-      while (i < length) {
-        // UsAscii
-        bytes(i) = chars(i).asInstanceOf[Byte]
-        i += 1
-      }
+      Unsafe.copyUSAsciiStrToBytes(literal, bytes)
       byteBuffer.put(bytes, 0, length)
     }
   }
@@ -518,4 +500,16 @@ private[remote] final class EnvelopeBuffer(val byteBuffer: ByteBuffer) {
   }
 
   def tryCleanDirectByteBuffer(): Unit = DirectByteBufferPool.tryCleanDirectByteBuffer(byteBuffer)
+
+  def copy(): EnvelopeBuffer = {
+    val p = byteBuffer.position()
+    byteBuffer.rewind()
+    val bytes = new Array[Byte](byteBuffer.remaining)
+    byteBuffer.get(bytes)
+    val newByteBuffer = ByteBuffer.wrap(bytes)
+    newByteBuffer.position(p)
+    byteBuffer.position(p)
+    new EnvelopeBuffer(newByteBuffer)
+  }
+
 }

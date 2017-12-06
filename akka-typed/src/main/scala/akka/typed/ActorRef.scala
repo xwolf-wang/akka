@@ -4,9 +4,11 @@
 package akka.typed
 
 import akka.{ actor ⇒ a }
+
 import scala.annotation.unchecked.uncheckedVariance
 import language.implicitConversions
 import scala.concurrent.Future
+import scala.util.Success
 
 /**
  * An ActorRef is the identity or address of an Actor instance. It is valid
@@ -27,7 +29,7 @@ trait ActorRef[-T] extends java.lang.Comparable[ActorRef[_]] {
   def tell(msg: T): Unit
 
   /**
-   * Narrow the type of this `ActorRef, which is always a safe operation.
+   * Narrow the type of this `ActorRef`, which is always a safe operation.
    */
   def narrow[U <: T]: ActorRef[U]
 
@@ -65,7 +67,13 @@ object ActorRef {
    * messages in while the Future is not fulfilled.
    */
   def apply[T](f: Future[ActorRef[T]], bufferSize: Int = 1000): ActorRef[T] =
-    new internal.FutureRef(FuturePath, bufferSize, f)
+    f.value match {
+      // an AdaptedActorSystem will always create refs eagerly, so it will take this path
+      case Some(Success(ref)) ⇒ ref
+      // for other ActorSystem implementations, this might work, it currently doesn't work
+      // for the adapted system, because the typed FutureRef cannot be watched from untyped
+      case x                  ⇒ new internal.FutureRef(FuturePath, bufferSize, f)
+    }
 
   /**
    * Create an ActorRef by providing a function that is invoked for sending

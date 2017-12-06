@@ -209,10 +209,11 @@ final class Flow[-In, +Out, +Mat](
   }
 
   /**
-   * Change the attributes of this [[Flow]] to the given ones and seal the list
-   * of attributes. This means that further calls will not be able to remove these
-   * attributes, but instead add new ones. Note that this
-   * operation has no effect on an empty Flow (because the attributes apply
+   * Replace the attributes of this [[Flow]] with the given ones. If this Flow is a composite
+   * of multiple graphs, new attributes on the composite will be less specific than attributes
+   * set directly on the individual graphs of the composite.
+   *
+   * Note that this operation has no effect on an empty Flow (because the attributes apply
    * only to the contained processing stages).
    */
   override def withAttributes(attr: Attributes): Repr[Out] =
@@ -221,10 +222,10 @@ final class Flow[-In, +Out, +Mat](
       shape)
 
   /**
-   * Add the given attributes to this Flow. Further calls to `withAttributes`
-   * will not remove these attributes. Note that this
-   * operation has no effect on an empty Flow (because the attributes apply
-   * only to the contained processing stages).
+   * Add the given attributes to this [[Flow]]. If the specific attribute was already present
+   * on this graph this means the added attribute will be more specific than the existing one.
+   * If this Flow is a composite of multiple graphs, new attributes on the composite will be
+   * less specific than attributes set directly on the individual graphs of the composite.
    */
   override def addAttributes(attr: Attributes): Repr[Out] = withAttributes(traversalBuilder.attributes and attr)
 
@@ -236,7 +237,24 @@ final class Flow[-In, +Out, +Mat](
   /**
    * Put an asynchronous boundary around this `Flow`
    */
-  override def async: Repr[Out] = addAttributes(Attributes.asyncBoundary)
+  override def async: Repr[Out] = super.async.asInstanceOf[Repr[Out]]
+
+  /**
+   * Put an asynchronous boundary around this `Flow`
+   *
+   * @param dispatcher Run the graph on this dispatcher
+   */
+  override def async(dispatcher: String): Repr[Out] =
+    super.async(dispatcher).asInstanceOf[Repr[Out]]
+
+  /**
+   * Put an asynchronous boundary around this `Flow`
+   *
+   * @param dispatcher      Run the graph on this dispatcher
+   * @param inputBufferSize Set the input buffer to this size for the graph
+   */
+  override def async(dispatcher: String, inputBufferSize: Int): Repr[Out] =
+    super.async(dispatcher, inputBufferSize).asInstanceOf[Repr[Out]]
 
   /**
    * Connect the `Source` to this `Flow` and then connect it to the `Sink` and run it. The returned tuple contains
@@ -309,6 +327,16 @@ object Flow {
     g match {
       case f: Flow[I, O, M]         ⇒ f
       case f: javadsl.Flow[I, O, M] ⇒ f.asScala
+      case g: GraphStageWithMaterializedValue[FlowShape[I, O], M] ⇒
+        // move these from the stage itself to make the returned source
+        // behave as it is the stage with regards to attributes
+        val attrs = g.traversalBuilder.attributes
+        val noAttrStage = g.withAttributes(Attributes.none)
+        new Flow(
+          LinearTraversalBuilder.fromBuilder(noAttrStage.traversalBuilder, noAttrStage.shape, Keep.right),
+          noAttrStage.shape
+        ).withAttributes(attrs)
+
       case other ⇒ new Flow(
         LinearTraversalBuilder.fromBuilder(g.traversalBuilder, g.shape, Keep.right),
         g.shape)
@@ -504,7 +532,23 @@ final case class RunnableGraph[+Mat](override val traversalBuilder: TraversalBui
   override def named(name: String): RunnableGraph[Mat] =
     addAttributes(Attributes.name(name))
 
-  override def async: RunnableGraph[Mat] = addAttributes(Attributes.asyncBoundary)
+  /**
+   * Note that an async boundary around a runnable graph does not make sense
+   */
+  override def async: RunnableGraph[Mat] =
+    super.async.asInstanceOf[RunnableGraph[Mat]]
+
+  /**
+   * Note that an async boundary around a runnable graph does not make sense
+   */
+  override def async(dispatcher: String): RunnableGraph[Mat] =
+    super.async(dispatcher).asInstanceOf[RunnableGraph[Mat]]
+
+  /**
+   * Note that an async boundary around a runnable graph does not make sense
+   */
+  override def async(dispatcher: String, inputBufferSize: Int): RunnableGraph[Mat] =
+    super.async(dispatcher, inputBufferSize).asInstanceOf[RunnableGraph[Mat]]
 }
 
 /**
@@ -615,7 +659,6 @@ trait FlowOps[+Out, +Mat] {
    *
    * @param attempts Maximum number of retries or -1 to retry indefinitely
    * @param pf Receives the failure cause and returns the new Source to be materialized if any
-   * @throws IllegalArgumentException if `attempts` is a negative number other than -1
    *
    */
   def recoverWithRetries[T >: Out](attempts: Int, pf: PartialFunction[Throwable, Graph[SourceShape[T], NotUsed]]): Repr[T] =
@@ -1788,13 +1831,25 @@ trait FlowOps[+Out, +Mat] {
    * Throttle implements the token bucket model. There is a bucket with a given token capacity (burst size or maximumBurst).
    * Tokens drops into the bucket at a given rate and can be `spared` for later use up to bucket capacity
    * to allow some burstiness. Whenever stream wants to send an element, it takes as many
-   * tokens from the bucket as number of elements. If there isn't any, throttle waits until the
-   * bucket accumulates enough tokens. Bucket is full when stream just materialized and started.
+   * tokens from the bucket as element costs. If there isn't any, throttle waits until the
+   * bucket accumulates enough tokens. Elements that costs more than the allowed burst will be delayed proportionally
+   * to their cost minus available tokens, meeting the target rate. Bucket is full when stream just materialized and started.
    *
    * Parameter `mode` manages behaviour when upstream is faster than throttle rate:
    *  - [[akka.stream.ThrottleMode.Shaping]] makes pauses before emitting messages to meet throttle rate
    *  - [[akka.stream.ThrottleMode.Enforcing]] fails with exception when upstream is faster than throttle rate. Enforcing
    *  cannot emit elements that cost more than the maximumBurst
+   *
+   * It is recommended to use non-zero burst sizes as they improve both performance and throttling precision by allowing
+   * the implementation to avoid using the scheduler when input rates fall below the enforced limit and to reduce
+   * most of the inaccuracy caused by the scheduler resolution (which is in the range of milliseconds).
+   *
+   *  WARNING: Be aware that throttle is using scheduler to slow down the stream. This scheduler has minimal time of triggering
+   *  next push. Consequently it will slow down the stream as it has minimal pause for emitting. This can happen in
+   *  case burst is 0 and speed is higher than 30 events per second. You need to consider another solution in case you are expecting
+   *  events being evenly spread with some small interval (30 milliseconds or less).
+   *  In other words the throttler always enforces the rate limit, but in certain cases (mostly due to limited scheduler resolution) it
+   *  enforces a tighter bound than what was prescribed. This can be also mitigated by increasing the burst size.
    *
    * '''Emits when''' upstream emits an element and configured time per each element elapsed
    *
@@ -1803,6 +1858,8 @@ trait FlowOps[+Out, +Mat] {
    * '''Completes when''' upstream completes
    *
    * '''Cancels when''' downstream cancels
+   *
+   * @see [[#throttleEven]]
    */
   def throttle(elements: Int, per: FiniteDuration, maximumBurst: Int, mode: ThrottleMode): Repr[Out] =
     throttle(elements, per, maximumBurst, ConstantFun.oneInt, mode)
@@ -1816,21 +1873,25 @@ trait FlowOps[+Out, +Mat] {
    * Throttle implements the token bucket model. There is a bucket with a given token capacity (burst size or maximumBurst).
    * Tokens drops into the bucket at a given rate and can be `spared` for later use up to bucket capacity
    * to allow some burstiness. Whenever stream wants to send an element, it takes as many
-   * tokens from the bucket as element cost. If there isn't any, throttle waits until the
+   * tokens from the bucket as element costs. If there isn't any, throttle waits until the
    * bucket accumulates enough tokens. Elements that costs more than the allowed burst will be delayed proportionally
-   * to their cost minus available tokens, meeting the target rate.
-   *
-   * It is recommended to use non-zero burst sizes as they improve both performance and throttling precision by allowing
-   * the implementation to avoid using the scheduler when input rates fall below the enforced limit and to reduce
-   * most of the inaccuracy caused by the scheduler resolution (which is in the range of milliseconds).
-   *
-   * Throttler always enforces the rate limit, but in certain cases (mostly due to limited scheduler resolution) it
-   * enforces a tighter bound than what was prescribed. This can be also mitigated by increasing the burst size.
+   * to their cost minus available tokens, meeting the target rate. Bucket is full when stream just materialized and started.
    *
    * Parameter `mode` manages behaviour when upstream is faster than throttle rate:
    *  - [[akka.stream.ThrottleMode.Shaping]] makes pauses before emitting messages to meet throttle rate
    *  - [[akka.stream.ThrottleMode.Enforcing]] fails with exception when upstream is faster than throttle rate. Enforcing
    *  cannot emit elements that cost more than the maximumBurst
+   *
+   * It is recommended to use non-zero burst sizes as they improve both performance and throttling precision by allowing
+   * the implementation to avoid using the scheduler when input rates fall below the enforced limit and to reduce
+   * most of the inaccuracy caused by the scheduler resolution (which is in the range of milliseconds).
+   *
+   *  WARNING: Be aware that throttle is using scheduler to slow down the stream. This scheduler has minimal time of triggering
+   *  next push. Consequently it will slow down the stream as it has minimal pause for emitting. This can happen in
+   *  case burst is 0 and speed is higher than 30 events per second. You need to consider another solution in case you are expecting
+   *  events being evenly spread with some small interval (30 milliseconds or less).
+   *  In other words the throttler always enforces the rate limit, but in certain cases (mostly due to limited scheduler resolution) it
+   *  enforces a tighter bound than what was prescribed. This can be also mitigated by increasing the burst size.
    *
    * '''Emits when''' upstream emits an element and configured time per each element elapsed
    *
@@ -1839,10 +1900,40 @@ trait FlowOps[+Out, +Mat] {
    * '''Completes when''' upstream completes
    *
    * '''Cancels when''' downstream cancels
+   *
+   * @see [[#throttleEven]]
    */
   def throttle(cost: Int, per: FiniteDuration, maximumBurst: Int,
                costCalculation: (Out) ⇒ Int, mode: ThrottleMode): Repr[Out] =
     via(new Throttle(cost, per, maximumBurst, costCalculation, mode))
+
+  /**
+   * This is a simplified version of throttle that spreads events evenly across the given time interval. throttleEven using
+   * best effort approach to meet throttle rate.
+   *
+   * Use this combinator when you need just slow down a stream without worrying about exact amount
+   * of time between events.
+   *
+   * If you want to be sure that no time interval has no more than specified number of events you need to use
+   * [[throttle()]] with maximumBurst attribute.
+   * @see [[#throttle]]
+   */
+  def throttleEven(elements: Int, per: FiniteDuration, mode: ThrottleMode): Repr[Out] =
+    throttle(elements, per, Int.MaxValue, ConstantFun.oneInt, mode)
+
+  /**
+   * This is a simplified version of throttle that spreads events evenly across the given time interval.
+   *
+   * Use this combinator when you need just slow down a stream without worrying about exact amount
+   * of time between events.
+   *
+   * If you want to be sure that no time interval has no more than specified number of events you need to use
+   * [[throttle()]] with maximumBurst attribute.
+   * @see [[#throttle]]
+   */
+  def throttleEven(cost: Int, per: FiniteDuration,
+                   costCalculation: (Out) ⇒ Int, mode: ThrottleMode): Repr[Out] =
+    via(new Throttle(cost, per, Int.MaxValue, costCalculation, mode))
 
   /**
    * Detaches upstream demand from downstream demand without detaching the
@@ -1968,7 +2059,7 @@ trait FlowOps[+Out, +Mat] {
    * Source(List(1, 2, 3)).interleave(List(4, 5, 6, 7), 2) // 1, 2, 4, 5, 3, 6, 7
    * }}}
    *
-   * After one of upstreams is complete than all the rest elements will be emitted from the second one
+   * After one of upstreams is complete then all the rest elements will be emitted from the second one
    *
    * If it gets error from one of upstreams - stream completes with failure.
    *
@@ -1982,13 +2073,37 @@ trait FlowOps[+Out, +Mat] {
    * '''Cancels when''' downstream cancels
    */
   def interleave[U >: Out](that: Graph[SourceShape[U], _], segmentSize: Int): Repr[U] =
-    via(interleaveGraph(that, segmentSize))
+    interleave(that, segmentSize, eagerClose = false)
+
+  /**
+   * Interleave is a deterministic merge of the given [[Source]] with elements of this [[Flow]].
+   * It first emits `segmentSize` number of elements from this flow to downstream, then - same amount for `that`
+   * source, then repeat process.
+   *
+   * If eagerClose is false and one of the upstreams complete the elements from the other upstream will continue passing
+   * through the interleave stage. If eagerClose is true and one of the upstream complete interleave will cancel the
+   * other upstream and complete itself.
+   *
+   * If it gets error from one of upstreams - stream completes with failure.
+   *
+   * '''Emits when''' element is available from the currently consumed upstream
+   *
+   * '''Backpressures when''' downstream backpressures. Signal to current
+   * upstream, switch to next upstream when received `segmentSize` elements
+   *
+   * '''Completes when''' the [[Flow]] and given [[Source]] completes
+   *
+   * '''Cancels when''' downstream cancels
+   */
+  def interleave[U >: Out](that: Graph[SourceShape[U], _], segmentSize: Int, eagerClose: Boolean): Repr[U] =
+    via(interleaveGraph(that, segmentSize, eagerClose))
 
   protected def interleaveGraph[U >: Out, M](
     that:        Graph[SourceShape[U], M],
-    segmentSize: Int): Graph[FlowShape[Out @uncheckedVariance, U], M] =
+    segmentSize: Int,
+    eagerClose:  Boolean                  = false): Graph[FlowShape[Out @uncheckedVariance, U], M] =
     GraphDSL.create(that) { implicit b ⇒ r ⇒
-      val interleave = b.add(Interleave[U](2, segmentSize))
+      val interleave = b.add(Interleave[U](2, segmentSize, eagerClose))
       r ~> interleave.in(1)
       FlowShape(interleave.in(0), interleave.out)
     }
@@ -2305,7 +2420,7 @@ trait FlowOpsMat[+Out, +Mat] extends FlowOps[Out, Mat] {
    * It first emits `segmentSize` number of elements from this flow to downstream, then - same amount for `that` source,
    * then repeat process.
    *
-   * After one of upstreams is complete than all the rest elements will be emitted from the second one
+   * After one of upstreams is complete then all the rest elements will be emitted from the second one
    *
    * If it gets error from one of upstreams - stream completes with failure.
    *
@@ -2315,7 +2430,26 @@ trait FlowOpsMat[+Out, +Mat] extends FlowOps[Out, Mat] {
    * where appropriate instead of manually writing functions that pass through one of the values.
    */
   def interleaveMat[U >: Out, Mat2, Mat3](that: Graph[SourceShape[U], Mat2], request: Int)(matF: (Mat, Mat2) ⇒ Mat3): ReprMat[U, Mat3] =
-    viaMat(interleaveGraph(that, request))(matF)
+    interleaveMat(that, request, eagerClose = false)(matF)
+
+  /**
+   * Interleave is a deterministic merge of the given [[Source]] with elements of this [[Flow]].
+   * It first emits `segmentSize` number of elements from this flow to downstream, then - same amount for `that` source,
+   * then repeat process.
+   *
+   * If eagerClose is false and one of the upstreams complete the elements from the other upstream will continue passing
+   * through the interleave stage. If eagerClose is true and one of the upstream complete interleave will cancel the
+   * other upstream and complete itself.
+   *
+   * If it gets error from one of upstreams - stream completes with failure.
+   *
+   * @see [[#interleave]].
+   *
+   * It is recommended to use the internally optimized `Keep.left` and `Keep.right` combiners
+   * where appropriate instead of manually writing functions that pass through one of the values.
+   */
+  def interleaveMat[U >: Out, Mat2, Mat3](that: Graph[SourceShape[U], Mat2], request: Int, eagerClose: Boolean)(matF: (Mat, Mat2) ⇒ Mat3): ReprMat[U, Mat3] =
+    viaMat(interleaveGraph(that, request, eagerClose))(matF)
 
   /**
    * Merge the given [[Source]] to this [[Flow]], taking elements as they arrive from input streams,
