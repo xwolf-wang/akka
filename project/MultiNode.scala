@@ -15,7 +15,7 @@ object MultiNode extends AutoPlugin {
   // MultiJvm tests can be excluded from normal test target an validatePullRequest
   // with -Dakka.test.multi-in-test=false
   val multiNodeTestInTest: Boolean =
-    System.getProperty("akka.test.multi-in-test", "true") == "true"
+    System.getProperty("akka.test.multi-in-test", "true") == "false" // FIXME #24116
 
   object CliOptions {
     val multiNode = CliOption("akka.test.multi-node", false)

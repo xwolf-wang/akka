@@ -46,7 +46,8 @@ class IndexSpec extends AkkaSpec with Matchers with DefaultTimeout {
       index.valueIterator("s1").toSet should ===(Set(1, 2, 3))
       index.valueIterator("s2").toSet should ===(Set(4))
     }
-    "remove values" in {
+    "remove values" in pendingUntilFixed { // FIXME #23901
+
       val index = emptyIndex
       index.put("s1", 1)
       index.put("s1", 2)
