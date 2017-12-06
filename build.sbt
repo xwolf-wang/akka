@@ -1,6 +1,7 @@
 import akka.AutomaticModuleName
 
-enablePlugins(TimeStampede, NoPublish) // FIXME enable UnidocRoot and UnidocWithPrValidation again
+enablePlugins(TimeStampede, NoPublish)
+enablePlugins(akka.TimeStampede, akka.NoPublish) // FIXME akka.UnidocRoot, akka.UnidocWithPrValidation
 disablePlugins(MimaPlugin)
 
 import com.typesafe.sbt.SbtMultiJvm.MultiJvmKeys.MultiJvm
@@ -17,8 +18,12 @@ initialize := {
 }
 
 akka.AkkaBuild.buildSettings
+// akka.Release.settings FIXME
 shellPrompt := { s => Project.extract(s).currentProject.id + " > " }
 resolverSettings
+
+val jdkVersion: String = System.getProperty("java.version")
+val isJDK9 = jdkVersion startsWith "9"
 
 lazy val aggregatedProjects: Seq[ProjectReference] = Seq(
   actor, actorTests,
@@ -77,6 +82,7 @@ lazy val akkaScalaNightly = akkaModule("akka-scala-nightly")
   // remove dependencies that we have to build ourselves (Scala STM)
   .aggregate(aggregatedProjects diff List[ProjectReference](agent, docs): _*)
   // .disablePlugins(ValidatePullRequest, MimaPlugin) // FIXME disable these again
+  .disablePlugins(MimaPlugin) // FIXME ValidatePullRequest
 
 lazy val benchJmh = akkaModule("akka-bench-jmh")
   .dependsOn(
@@ -96,6 +102,9 @@ lazy val camel = akkaModule("akka-camel")
   .settings(Dependencies.camel)
   .settings(AutomaticModuleName.settings("akka.camel"))
   .settings(OSGi.camel)
+  .settings(
+    javaOptions in Test ++= { if (isJDK9) Seq("--add-modules", "java.xml.bind") else Seq() }
+  )
 
 lazy val cluster = akkaModule("akka-cluster")
   .dependsOn(remote, remoteTests % "test->test" , testkit % "test->test")
