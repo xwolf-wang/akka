@@ -231,6 +231,7 @@ lazy val docs = akkaModule("akka-docs")
     paradoxGroups := Map("Language" -> Seq("Scala", "Java")),
     resolvers += Resolver.jcenterRepo,
     deployRsyncArtifact := List((paradox in Compile).value -> s"www/docs/akka/${version.value}"),
+    javaOptions in Test ++= { if (isJDK9) Seq("--add-modules", "java.xml.bind") else Seq() },
   )
   .enablePlugins(AkkaParadoxPlugin, DeployRsync, NoPublish, ParadoxBrowse) // FIXME ScaladocNoVerificationOfDiagrams)
   .disablePlugins(MimaPlugin, WhiteSourcePlugin)
