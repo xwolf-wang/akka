@@ -14,13 +14,13 @@ object Dependencies {
   lazy val scalaCheckVersion = settingKey[String]("The version of ScalaCheck to use.")
   lazy val java8CompatVersion = settingKey[String]("The version of scala-java8-compat to use.")
   val junitVersion = "4.12"
-  val sslConfigVersion = "0.2.1"
-  val slf4jVersion = "1.7.23"
+  val sslConfigVersion = "0.2.2"
+  val slf4jVersion = "1.7.25"
   val scalaXmlVersion = "1.0.6"
-  val aeronVersion = "1.2.5"
+  val aeronVersion = "1.7.0"
 
   val Versions = Seq(
-    // crossScalaVersions := Seq("2.11.11", "2.12.2"), // FIXME make sure JDK9 stuff only is detected when we use Scala 2.12 https://github.com/sbt/sbt-multi-release-jar/issues/9
+    // crossScalaVersions := Seq("2.11.12", "2.12.4"), // FIXME make sure JDK9 stuff only is detected when we use Scala 2.12 https://github.com/sbt/sbt-multi-release-jar/issues/9
     crossScalaVersions := Seq("2.12.4"),
     scalaVersion := System.getProperty("akka.build.scalaVersion", crossScalaVersions.value.head),
     scalaStmVersion := sys.props.get("akka.build.scalaStmVersion").getOrElse("0.8"),
@@ -59,7 +59,7 @@ object Dependencies {
     val sigar = "org.fusesource" % "sigar" % "1.6.4" // ApacheV2
 
     // reactive streams
-    val reactiveStreams = "org.reactivestreams" % "reactive-streams" % "1.0.1" // CC0
+    val reactiveStreams = "org.reactivestreams" % "reactive-streams" % "1.0.2" // CC0
 
     // ssl-config
     val sslConfigCore = "com.typesafe" %% "ssl-config-core" % sslConfigVersion // ApacheV2
@@ -109,7 +109,7 @@ object Dependencies {
       val slf4jLog4j = "org.slf4j" % "log4j-over-slf4j" % slf4jVersion % "test" // MIT
 
       // reactive streams tck
-      val reactiveStreamsTck = "org.reactivestreams" % "reactive-streams-tck" % "1.0.1" % "test" // CC0
+      val reactiveStreamsTck = "org.reactivestreams" % "reactive-streams-tck" % "1.0.2" % "test" // CC0
     }
 
     object Provided {

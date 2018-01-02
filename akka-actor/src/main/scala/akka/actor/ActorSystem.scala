@@ -684,7 +684,7 @@ private[akka] class ActorSystemImpl(
         err.print(cause.getMessage)
         err.print(", ")
         err.print(message)
-        err.print(" for ActorSystem[")
+        err.print(" ActorSystem[")
         err.print(name)
         err.println("]")
         System.err.flush()
@@ -973,7 +973,9 @@ private[akka] class ActorSystemImpl(
     private[this] final val ref = new AtomicReference(done)
 
     // onComplete never fires twice so safe to avoid null check
-    upStreamTerminated onComplete { t ⇒ ref.getAndSet(null).complete(t) }
+    upStreamTerminated onComplete {
+      t ⇒ ref.getAndSet(null).complete(t)
+    }
 
     /**
      * Adds a Runnable that will be executed on ActorSystem termination.
