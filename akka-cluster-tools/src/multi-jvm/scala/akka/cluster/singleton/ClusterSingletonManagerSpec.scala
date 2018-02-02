@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster.singleton
@@ -67,7 +67,7 @@ object ClusterSingletonManagerSpec extends MultiNodeConfig {
   /**
    * This channel is extremely strict with regards to
    * registration and unregistration of consumer to
-   * be able to detect misbehaviour (e.g. two active
+   * be able to detect misbehavior (e.g. two active
    * singleton instances).
    */
   class PointToPointChannel extends Actor with ActorLogging {
@@ -334,7 +334,7 @@ class ClusterSingletonManagerSpec extends MultiNodeSpec(ClusterSingletonManagerS
       memberProbe.expectMsgClass(classOf[CurrentClusterState])
 
       runOn(controller) {
-        // watch that it is not terminated, which would indicate misbehaviour
+        // watch that it is not terminated, which would indicate misbehavior
         watch(system.actorOf(Props[PointToPointChannel], "queue"))
       }
       enterBarrier("queue-started")

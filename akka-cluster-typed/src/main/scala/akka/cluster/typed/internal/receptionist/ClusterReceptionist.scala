@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.cluster.typed.internal.receptionist
 
@@ -18,7 +18,7 @@ import akka.actor.typed.internal.receptionist.ReceptionistImpl._
 import akka.actor.typed.receptionist.Receptionist.AbstractServiceKey
 import akka.actor.typed.receptionist.Receptionist.AllCommands
 import akka.actor.typed.receptionist.Receptionist.Command
-import akka.actor.typed.receptionist.Receptionist.ServiceKey
+import akka.actor.typed.receptionist.ServiceKey
 import akka.actor.typed.scaladsl.ActorContext
 
 import scala.language.existentials
@@ -63,7 +63,7 @@ private[typed] object ClusterReceptionist extends ReceptionistBehaviorProvider {
   /**
    * Returns an ReceptionistImpl.ExternalInterface that synchronizes registered services with
    */
-  def clusteredReceptionist(settings: ClusterReceptionistSettings = ClusterReceptionistSettings())(ctx: ActorContext[AllCommands]): ReceptionistImpl.ExternalInterface = {
+  def clusteredReceptionist(settings: ClusterReceptionistSettings = ClusterReceptionistSettings())(ctx: ActorContext[AllCommands]): ReceptionistImpl.ExternalInterface[ServiceRegistry] = {
     import akka.actor.typed.scaladsl.adapter._
     val untypedSystem = ctx.system.toUntyped
 
@@ -87,21 +87,7 @@ private[typed] object ClusterReceptionist extends ReceptionistBehaviorProvider {
         .foldLeft(Map.empty[AbstractServiceKey, Set[ActorRef[_]]])(changesForKey(_, _))
     }
 
-    val adapter: ActorRef[Replicator.ReplicatorMessage] =
-      ctx.spawnAdapter[Replicator.ReplicatorMessage] { (x: Replicator.ReplicatorMessage) ⇒
-        x match {
-          case changed @ Replicator.Changed(ReceptionistKey) ⇒
-            val value = changed.get(ReceptionistKey)
-            val oldState = state
-            state = ServiceRegistry(value) // is that thread-safe?
-            val changes = diff(oldState, state)
-            RegistrationsChangedExternally(changes)
-        }
-      }
-
-    replicator ! Replicator.Subscribe(ReceptionistKey, adapter.toUntyped)
-
-    new ExternalInterface {
+    val externalInterface = new ExternalInterface[ServiceRegistry] {
       private def updateRegistry(update: ServiceRegistry ⇒ ServiceRegistry): Unit = {
         state = update(state)
         replicator ! Replicator.Update(ReceptionistKey, EmptyORMultiMap, settings.writeConsistency) { registry ⇒
@@ -114,6 +100,24 @@ private[typed] object ClusterReceptionist extends ReceptionistBehaviorProvider {
 
       def onUnregister[T](key: ServiceKey[T], address: ActorRef[T]): Unit =
         updateRegistry(_.removeBinding(key, address))
+
+      def onExternalUpdate(update: ServiceRegistry): Unit = {
+        state = update
+      }
     }
+
+    val adapter: ActorRef[Replicator.ReplicatorMessage] =
+      ctx.messageAdapter[Replicator.ReplicatorMessage] {
+        case changed @ Replicator.Changed(ReceptionistKey) ⇒
+          val value = changed.get(ReceptionistKey)
+          val oldState = state
+          val newState = ServiceRegistry(value)
+          val changes = diff(oldState, newState)
+          externalInterface.RegistrationsChangedExternally(changes, newState)
+      }
+
+    replicator ! Replicator.Subscribe(ReceptionistKey, adapter.toUntyped)
+
+    externalInterface
   }
 }

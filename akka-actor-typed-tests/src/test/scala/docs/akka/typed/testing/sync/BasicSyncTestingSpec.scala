@@ -10,8 +10,8 @@ import org.scalatest.{ Matchers, WordSpec }
 
 object BasicSyncTestingSpec {
   //#child
-  val childActor = Actor.immutable[String] { (_, _) ⇒
-    Actor.same[String]
+  val childActor = Behaviors.immutable[String] { (_, _) ⇒
+    Behaviors.same[String]
   }
   //#child
 
@@ -23,24 +23,24 @@ object BasicSyncTestingSpec {
   case object SayHelloToAnonymousChild extends Cmd
   case class SayHello(who: ActorRef[String]) extends Cmd
 
-  val myBehaviour = Actor.immutablePartial[Cmd] {
+  val myBehavior = Behaviors.immutablePartial[Cmd] {
     case (ctx, CreateChild(name)) ⇒
       ctx.spawn(childActor, name)
-      Actor.same
+      Behaviors.same
     case (ctx, CreateAnonymousChild) ⇒
       ctx.spawnAnonymous(childActor)
-      Actor.same
+      Behaviors.same
     case (ctx, SayHelloToChild(childName)) ⇒
       val child: ActorRef[String] = ctx.spawn(childActor, childName)
       child ! "hello"
-      Actor.same
+      Behaviors.same
     case (ctx, SayHelloToAnonymousChild) ⇒
       val child: ActorRef[String] = ctx.spawnAnonymous(childActor)
       child ! "hello stranger"
-      Actor.same
+      Behaviors.same
     case (_, SayHello(who)) ⇒
       who ! "hello"
-      Actor.same
+      Behaviors.same
     //#under-test
   }
 
@@ -54,7 +54,7 @@ class BasicSyncTestingSpec extends WordSpec with Matchers {
 
     "record spawning" in {
       //#test-child
-      val testKit = BehaviorTestkit(myBehaviour)
+      val testKit = BehaviorTestkit(myBehavior)
       testKit.run(CreateChild("child"))
       testKit.expectEffect(Spawned(childActor, "child"))
       //#test-child
@@ -62,7 +62,7 @@ class BasicSyncTestingSpec extends WordSpec with Matchers {
 
     "record spawning anonymous" in {
       //#test-anonymous-child
-      val testKit = BehaviorTestkit(myBehaviour)
+      val testKit = BehaviorTestkit(myBehavior)
       testKit.run(CreateAnonymousChild)
       testKit.expectEffect(SpawnedAnonymous(childActor))
       //#test-anonymous-child
@@ -70,7 +70,7 @@ class BasicSyncTestingSpec extends WordSpec with Matchers {
 
     "record message sends" in {
       //#test-message
-      val testKit = BehaviorTestkit(myBehaviour)
+      val testKit = BehaviorTestkit(myBehavior)
       val inbox = TestInbox[String]()
       testKit.run(SayHello(inbox.ref))
       inbox.expectMsg("hello")
@@ -79,7 +79,7 @@ class BasicSyncTestingSpec extends WordSpec with Matchers {
 
     "send a message to a spawned child" in {
       //#test-child-message
-      val testKit = BehaviorTestkit(myBehaviour)
+      val testKit = BehaviorTestkit(myBehavior)
       testKit.run(SayHelloToChild("child"))
       val childInbox = testKit.childInbox[String]("child")
       childInbox.expectMsg("hello")
@@ -88,10 +88,10 @@ class BasicSyncTestingSpec extends WordSpec with Matchers {
 
     "send a message to an anonymous spawned child" in {
       //#test-child-message-anonymous
-      val testKit = BehaviorTestkit(myBehaviour)
+      val testKit = BehaviorTestkit(myBehavior)
       testKit.run(SayHelloToAnonymousChild)
       // Anonymous actors are created as: $a $b etc
-      val childInbox = testKit.childInbox[String]("$a")
+      val childInbox = testKit.childInbox[String](s"$$a")
       childInbox.expectMsg("hello stranger")
       //#test-child-message-anonymous
     }

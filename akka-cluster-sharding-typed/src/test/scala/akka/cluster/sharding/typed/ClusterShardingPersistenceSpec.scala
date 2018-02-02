@@ -1,19 +1,13 @@
 /*
- * Copyright (C) 2017 Lightbend Inc. <http://www.lightbend.com/>
+ * Copyright (C) 2017-2018 Lightbend Inc. <http://www.lightbend.com/>
  */
-
 package akka.cluster.sharding.typed
 
-import akka.actor.typed.{ ActorRef, Props, TypedSpec }
-import com.typesafe.config.ConfigFactory
-import org.scalatest.concurrent.ScalaFutures
-
-import scala.concurrent.duration._
-import akka.actor.typed.Behavior
-import akka.testkit.typed.TestKitSettings
+import akka.actor.typed.{ ActorRef, Behavior, Props, TypedAkkaSpecWithShutdown }
+import akka.persistence.typed.scaladsl.PersistentBehaviors
+import akka.testkit.typed.TestKit
 import akka.testkit.typed.scaladsl.TestProbe
-import akka.persistence.typed.scaladsl.PersistentActor
-import akka.persistence.typed.scaladsl.PersistentActor.PersistNothing
+import com.typesafe.config.ConfigFactory
 
 object ClusterShardingPersistenceSpec {
   val config = ConfigFactory.parseString(
@@ -42,31 +36,31 @@ object ClusterShardingPersistenceSpec {
   final case class Get(replyTo: ActorRef[String]) extends Command
   final case object StopPlz extends Command
 
-  import PersistentActor._
+  import PersistentBehaviors._
 
   val persistentActor: Behavior[Command] =
-    PersistentActor.persistentEntity[Command, String, String](
+    PersistentBehaviors.persistentEntity[Command, String, String](
       persistenceIdFromActorName = name ⇒ "Test-" + name,
       initialState = "",
-      commandHandler = CommandHandler((ctx, state, cmd) ⇒ cmd match {
+      commandHandler = (_, state, cmd) ⇒ cmd match {
         case Add(s) ⇒ Effect.persist(s)
         case Get(replyTo) ⇒
           replyTo ! state
           Effect.none
         case StopPlz ⇒ Effect.stop
-      }),
+      },
       eventHandler = (state, evt) ⇒ if (state.isEmpty) evt else state + "|" + evt)
 
   val typeKey = EntityTypeKey[Command]("test")
 
 }
 
-class ClusterShardingPersistenceSpec extends TypedSpec(ClusterShardingPersistenceSpec.config) with ScalaFutures {
-  import akka.actor.typed.scaladsl.adapter._
+class ClusterShardingPersistenceSpec extends TestKit("ClusterShardingPersistenceSPec", ClusterShardingPersistenceSpec.config)
+  with TypedAkkaSpecWithShutdown {
   import ClusterShardingPersistenceSpec._
+  import akka.actor.typed.scaladsl.adapter._
 
   implicit val s = system
-  implicit val testkitSettings = TestKitSettings(system)
   val sharding = ClusterSharding(system)
 
   implicit val untypedSystem = system.toUntyped
@@ -87,7 +81,7 @@ class ClusterShardingPersistenceSpec extends TypedSpec(ClusterShardingPersistenc
       ref ! Add("b")
       ref ! Add("c")
       ref ! Get(p.ref)
-      p.expectMsg("a|b|c")
+      p.expectMessage("a|b|c")
     }
   }
 }

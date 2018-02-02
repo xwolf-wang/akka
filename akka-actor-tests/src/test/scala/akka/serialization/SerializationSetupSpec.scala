@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.serialization
 
@@ -97,6 +97,21 @@ class SerializationSetupSpec extends AkkaSpec(
     "allow a configured binding to hook up to a programmatic serializer" in {
       val serializer = SerializationExtension(system).findSerializerFor(new ConfigurationDummy)
       serializer shouldBe theSameInstanceAs(programmaticDummySerializer)
+    }
+
+    "fail during ActorSystem creation when misconfigured" in {
+      val config =
+        ConfigFactory.parseString(
+          """
+             akka.loglevel = OFF
+             akka.stdout-loglevel = OFF
+             akka.actor.serializers.doe = "john.is.not.here"
+          """).withFallback(ConfigFactory.load())
+
+      a[ClassNotFoundException] should be thrownBy {
+        val system = ActorSystem("SerializationSetupSpec-FailingSystem", config)
+        system.terminate()
+      }
     }
 
   }

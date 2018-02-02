@@ -1,15 +1,14 @@
 /**
- * Copyright (C) 2009-2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.cluster.typed
 
+import akka.actor.typed.TypedAkkaSpecWithShutdown
+import akka.actor.typed.scaladsl.adapter._
 import akka.cluster.ClusterEvent._
 import akka.cluster.MemberStatus
-import akka.actor.typed.TypedSpec
-import akka.actor.typed.internal.adapter.ActorSystemAdapter
-import akka.actor.typed.scaladsl.adapter._
-import akka.testkit.typed.TestKitSettings
 import akka.testkit.typed.scaladsl.TestProbe
+import akka.testkit.typed.{ TestKit, TestKitSettings }
 import com.typesafe.config.ConfigFactory
 import org.scalatest.concurrent.ScalaFutures
 
@@ -33,7 +32,7 @@ object ClusterApiSpec {
     """)
 }
 
-class ClusterApiSpec extends TypedSpec(ClusterApiSpec.config) with ScalaFutures {
+class ClusterApiSpec extends TestKit("ClusterApiSpec", ClusterApiSpec.config) with TypedAkkaSpecWithShutdown with ScalaFutures {
 
   val testSettings = TestKitSettings(system)
   val clusterNode1 = Cluster(system)
@@ -49,8 +48,8 @@ class ClusterApiSpec extends TypedSpec(ClusterApiSpec.config) with ScalaFutures 
       try {
         val clusterNode2 = Cluster(adaptedSystem2)
 
-        val node1Probe = TestProbe[AnyRef]()(system, testSettings)
-        val node2Probe = TestProbe[AnyRef]()(adaptedSystem2, testSettings)
+        val node1Probe = TestProbe[AnyRef]()(system)
+        val node2Probe = TestProbe[AnyRef]()(adaptedSystem2)
 
         // initial cached selfMember
         clusterNode1.selfMember.status should ===(MemberStatus.Removed)
@@ -59,7 +58,7 @@ class ClusterApiSpec extends TypedSpec(ClusterApiSpec.config) with ScalaFutures 
         // check that subscriptions work
         clusterNode1.subscriptions ! Subscribe(node1Probe.ref, classOf[MemberEvent])
         clusterNode1.manager ! Join(clusterNode1.selfMember.address)
-        node1Probe.expectMsgType[MemberUp].member.uniqueAddress == clusterNode1.selfMember.uniqueAddress
+        node1Probe.expectMessageType[MemberUp].member.uniqueAddress == clusterNode1.selfMember.uniqueAddress
 
         // check that cached selfMember is updated
         node1Probe.awaitAssert(
@@ -67,40 +66,40 @@ class ClusterApiSpec extends TypedSpec(ClusterApiSpec.config) with ScalaFutures 
 
         // subscribing to OnSelfUp when already up
         clusterNode1.subscriptions ! Subscribe(node1Probe.ref, classOf[SelfUp])
-        node1Probe.expectMsgType[SelfUp]
+        node1Probe.expectMessageType[SelfUp]
 
         // selfMember update and on up subscription on node 2 when joining
         clusterNode2.subscriptions ! Subscribe(node2Probe.ref, classOf[SelfUp])
         clusterNode2.manager ! Join(clusterNode1.selfMember.address)
         node2Probe.awaitAssert(
           clusterNode2.selfMember.status should ===(MemberStatus.Up))
-        node2Probe.expectMsgType[SelfUp]
+        node2Probe.expectMessageType[SelfUp]
 
         // events about node2 joining to subscriber on node1
-        node1Probe.expectMsgType[MemberJoined].member.uniqueAddress == clusterNode2.selfMember.uniqueAddress
-        node1Probe.expectMsgType[MemberUp].member.uniqueAddress == clusterNode1.selfMember.uniqueAddress
+        node1Probe.expectMessageType[MemberJoined].member.uniqueAddress == clusterNode2.selfMember.uniqueAddress
+        node1Probe.expectMessageType[MemberUp].member.uniqueAddress == clusterNode1.selfMember.uniqueAddress
 
         // OnSelfRemoved and subscription events around node2 leaving
         clusterNode2.subscriptions ! Subscribe(node2Probe.ref, classOf[SelfRemoved])
         clusterNode2.manager ! Leave(clusterNode2.selfMember.address)
 
         // node1 seeing all those transition events
-        node1Probe.expectMsgType[MemberLeft].member.uniqueAddress == clusterNode2.selfMember.uniqueAddress
-        node1Probe.expectMsgType[MemberExited].member.uniqueAddress == clusterNode2.selfMember.uniqueAddress
-        node1Probe.expectMsgType[MemberRemoved].member.uniqueAddress == clusterNode2.selfMember.uniqueAddress
+        node1Probe.expectMessageType[MemberLeft].member.uniqueAddress == clusterNode2.selfMember.uniqueAddress
+        node1Probe.expectMessageType[MemberExited].member.uniqueAddress == clusterNode2.selfMember.uniqueAddress
+        node1Probe.expectMessageType[MemberRemoved].member.uniqueAddress == clusterNode2.selfMember.uniqueAddress
 
         // selfMember updated and self removed event gotten
         node2Probe.awaitAssert(
           clusterNode2.selfMember.status should ===(MemberStatus.Removed))
-        node2Probe.expectMsg(SelfRemoved(MemberStatus.Exiting))
+        node2Probe.expectMessage(SelfRemoved(MemberStatus.Exiting))
 
         // subscribing to SelfRemoved when already removed yields immediate message back
         clusterNode2.subscriptions ! Subscribe(node2Probe.ref, classOf[SelfRemoved])
-        node2Probe.expectMsg(SelfRemoved(MemberStatus.Exiting))
+        node2Probe.expectMessage(SelfRemoved(MemberStatus.Exiting))
 
         // subscribing to SelfUp when already removed yields nothing
         clusterNode2.subscriptions ! Subscribe(node2Probe.ref, classOf[SelfUp])
-        node2Probe.expectNoMsg(100.millis)
+        node2Probe.expectNoMessage()
 
       } finally {
         Await.result(system2.terminate(), 3.seconds)

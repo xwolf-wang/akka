@@ -1,10 +1,9 @@
 /**
- * Copyright (C) 2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.cluster.sharding
 
 import scala.concurrent.Future
-
 import scala.concurrent.duration._
 import akka.Done
 import akka.actor.ActorSystem
@@ -15,11 +14,13 @@ import akka.cluster.MemberStatus
 import akka.testkit.AkkaSpec
 import akka.testkit.TestActors.EchoActor
 import akka.testkit.TestProbe
+import akka.testkit.WithLogCapturing
 
 object CoordinatedShutdownShardingSpec {
   val config =
     """
     akka.loglevel = DEBUG
+    akka.loggers = ["akka.testkit.SilenceAllTestEventListener"]
     akka.actor.provider = "cluster"
     akka.remote.netty.tcp.port = 0
     akka.remote.artery.canonical.port = 0
@@ -34,7 +35,7 @@ object CoordinatedShutdownShardingSpec {
   }
 }
 
-class CoordinatedShutdownShardingSpec extends AkkaSpec(CoordinatedShutdownShardingSpec.config) {
+class CoordinatedShutdownShardingSpec extends AkkaSpec(CoordinatedShutdownShardingSpec.config) with WithLogCapturing {
   import CoordinatedShutdownShardingSpec._
 
   val sys1 = ActorSystem(system.name, system.settings.config)
@@ -61,7 +62,7 @@ class CoordinatedShutdownShardingSpec extends AkkaSpec(CoordinatedShutdownShardi
     Future.successful(Done)
   }
   CoordinatedShutdown(sys3).addTask(CoordinatedShutdown.PhaseBeforeServiceUnbind, "unbind") { () ⇒
-    probe1.ref ! "CS-unbind-3"
+    probe3.ref ! "CS-unbind-3"
     Future.successful(Done)
   }
 
@@ -70,25 +71,27 @@ class CoordinatedShutdownShardingSpec extends AkkaSpec(CoordinatedShutdownShardi
     shutdown(sys2)
   }
 
+  // Using region 2 as it is not shutdown in either test
   def pingEntities(): Unit = {
-    region3.tell(1, probe3.ref)
-    probe3.expectMsg(10.seconds, 1)
-    region3.tell(2, probe3.ref)
-    probe3.expectMsg(2)
-    region3.tell(3, probe3.ref)
-    probe3.expectMsg(3)
+    awaitAssert({
+      val p1 = TestProbe()(sys2)
+      region2.tell(1, p1.ref)
+      p1.expectMsg(1.seconds, 1)
+      val p2 = TestProbe()(sys2)
+      region2.tell(2, p2.ref)
+      p2.expectMsg(1.seconds, 2)
+      val p3 = TestProbe()(sys2)
+      region2.tell(3, p3.ref)
+      p3.expectMsg(1.seconds, 3)
+    }, 10.seconds)
   }
 
   "Sharding and CoordinatedShutdown" must {
     "init cluster" in {
-      // FIXME this test should also work when coordinator is on the leaving sys1 node,
-      //       but currently there seems to be a race between the CS and the ClusterSingleton observing OldestChanged
-      //       and terminating coordinator singleton before the graceful sharding stop is done.
+      Cluster(sys1).join(Cluster(sys1).selfAddress) // coordinator will initially run on sys1
+      awaitAssert(Cluster(sys1).selfMember.status should ===(MemberStatus.Up))
 
-      Cluster(sys2).join(Cluster(sys2).selfAddress) // coordinator will initially run on sys2
-      awaitAssert(Cluster(sys2).selfMember.status should ===(MemberStatus.Up))
-
-      Cluster(sys1).join(Cluster(sys2).selfAddress)
+      Cluster(sys2).join(Cluster(sys1).selfAddress)
       within(10.seconds) {
         awaitAssert {
           Cluster(sys1).state.members.size should ===(2)
@@ -115,9 +118,9 @@ class CoordinatedShutdownShardingSpec extends AkkaSpec(CoordinatedShutdownShardi
 
     "run coordinated shutdown when leaving" in {
       Cluster(sys3).leave(Cluster(sys1).selfAddress)
-      probe1.expectMsg("CS-unbind-1")
+      probe1.expectMsg(10.seconds, "CS-unbind-1")
 
-      within(10.seconds) {
+      within(20.seconds) {
         awaitAssert {
           Cluster(sys2).state.members.size should ===(2)
           Cluster(sys3).state.members.size should ===(2)
@@ -134,18 +137,19 @@ class CoordinatedShutdownShardingSpec extends AkkaSpec(CoordinatedShutdownShardi
     }
 
     "run coordinated shutdown when downing" in {
-      Cluster(sys3).down(Cluster(sys2).selfAddress)
-      probe2.expectMsg("CS-unbind-2")
+      // coordinator is on sys2
+      Cluster(sys2).down(Cluster(sys3).selfAddress)
+      probe3.expectMsg(10.seconds, "CS-unbind-3")
 
-      within(10.seconds) {
+      within(20.seconds) {
         awaitAssert {
-          Cluster(system).state.members.size should ===(1)
+          Cluster(sys2).state.members.size should ===(1)
         }
       }
       within(10.seconds) {
         awaitAssert {
-          Cluster(sys2).isTerminated should ===(true)
-          sys2.whenTerminated.isCompleted should ===(true)
+          Cluster(sys3).isTerminated should ===(true)
+          sys3.whenTerminated.isCompleted should ===(true)
         }
       }
 

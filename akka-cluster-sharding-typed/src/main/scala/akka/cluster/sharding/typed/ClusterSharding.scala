@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Lightbend Inc. <http://www.lightbend.com/>
+ * Copyright (C) 2017-2018 Lightbend Inc. <http://www.lightbend.com/>
  */
 package akka.cluster.sharding.typed
 
@@ -283,7 +283,7 @@ final class AdaptedClusterShardingImpl(system: ActorSystem[_]) extends ClusterSh
 }
 
 @DoNotInherit
-sealed trait ClusterSharding extends Extension {
+sealed abstract class ClusterSharding extends Extension {
 
   /**
    * Spawn a shard region or a proxy depending on if the settings require role and if this node has such a role.

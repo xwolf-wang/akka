@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster.ddata.typed.javadsl;
@@ -24,14 +24,14 @@ import akka.testkit.javadsl.TestKit;
 import akka.actor.typed.ActorRef;
 import akka.actor.typed.Behavior;
 import akka.cluster.ddata.typed.javadsl.Replicator.Command;
-import akka.actor.typed.javadsl.Actor;
+import akka.actor.typed.javadsl.Behaviors;
 import akka.actor.typed.javadsl.Adapter;
-import akka.actor.typed.javadsl.Actor.MutableBehavior;
+import akka.actor.typed.javadsl.Behaviors.MutableBehavior;
 import akka.actor.typed.javadsl.ActorContext;
 
 public class ReplicatorTest extends JUnitSuite {
 
-  static interface ClientCommand {
+  interface ClientCommand {
   }
 
   static final class Increment implements ClientCommand {
@@ -53,13 +53,13 @@ public class ReplicatorTest extends JUnitSuite {
     }
   }
 
-  static interface InternalMsg extends ClientCommand {
+  interface InternalMsg extends ClientCommand {
   }
 
   static final class InternalUpdateResponse<A extends ReplicatedData> implements InternalMsg {
     final Replicator.UpdateResponse<A> rsp;
 
-    public InternalUpdateResponse(Replicator.UpdateResponse<A> rsp) {
+    InternalUpdateResponse(Replicator.UpdateResponse<A> rsp) {
       this.rsp = rsp;
     }
   }
@@ -67,7 +67,7 @@ public class ReplicatorTest extends JUnitSuite {
   static final class InternalGetResponse<A extends ReplicatedData> implements InternalMsg {
     final Replicator.GetResponse<A> rsp;
 
-    public InternalGetResponse(Replicator.GetResponse<A> rsp) {
+    InternalGetResponse(Replicator.GetResponse<A> rsp) {
       this.rsp = rsp;
     }
   }
@@ -75,7 +75,7 @@ public class ReplicatorTest extends JUnitSuite {
   static final class InternalChanged<A extends ReplicatedData> implements InternalMsg {
     final Replicator.Changed<A> chg;
 
-    public InternalChanged(Replicator.Changed<A> chg) {
+    InternalChanged(Replicator.Changed<A> chg) {
       this.chg = chg;
     }
   }
@@ -91,29 +91,35 @@ public class ReplicatorTest extends JUnitSuite {
 
     private int cachedValue = 0;
 
-    public Client(ActorRef<Command> replicator, Cluster node, ActorContext<ClientCommand> ctx) {
+    Client(ActorRef<Command> replicator, Cluster node, ActorContext<ClientCommand> ctx) {
       this.replicator = replicator;
       this.node = node;
 
-      updateResponseAdapter = ctx.spawnAdapter(m -> new InternalUpdateResponse<>(m));
+      updateResponseAdapter = ctx.messageAdapter(
+          (Class<Replicator.UpdateResponse<GCounter>>) (Object) Replicator.UpdateResponse.class,
+          msg -> new InternalUpdateResponse(msg));
 
-      getResponseAdapter = ctx.spawnAdapter(m -> new InternalGetResponse<>(m));
+      getResponseAdapter = ctx.messageAdapter(
+          (Class<Replicator.GetResponse<GCounter>>) (Object) Replicator.GetResponse.class,
+          msg -> new InternalGetResponse(msg));
 
-      changedAdapter = ctx.spawnAdapter(m -> new InternalChanged<>(m));
+      changedAdapter = ctx.messageAdapter(
+          (Class<Replicator.Changed<GCounter>>) (Object) Replicator.Changed.class,
+          msg -> new InternalChanged(msg));
 
       replicator.tell(new Replicator.Subscribe<>(Key, changedAdapter));
     }
 
     public static Behavior<ClientCommand> create(ActorRef<Command> replicator, Cluster node) {
-      return Actor.mutable(ctx -> new Client(replicator, node, ctx));
+      return Behaviors.mutable(ctx -> new Client(replicator, node, ctx));
     }
 
     @Override
-    public Actor.Receive<ClientCommand> createReceive() {
+    public Behaviors.Receive<ClientCommand> createReceive() {
       return receiveBuilder()
         .onMessage(Increment.class, cmd -> {
           replicator.tell(
-            new Replicator.Update<GCounter>(Key, GCounter.empty(), Replicator.writeLocal(), updateResponseAdapter,
+            new Replicator.Update<>(Key, GCounter.empty(), Replicator.writeLocal(), updateResponseAdapter,
               curr -> curr.increment(node, 1)));
           return this;
         })
@@ -122,7 +128,7 @@ public class ReplicatorTest extends JUnitSuite {
         })
         .onMessage(GetValue.class, cmd -> {
           replicator.tell(
-            new Replicator.Get<GCounter>(Key, Replicator.readLocal(), getResponseAdapter, Optional.of(cmd.replyTo)));
+            new Replicator.Get<>(Key, Replicator.readLocal(), getResponseAdapter, Optional.of(cmd.replyTo)));
           return this;
         })
         .onMessage(GetCachedValue.class, cmd -> {

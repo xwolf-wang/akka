@@ -3,105 +3,69 @@ package akka.testkit.typed
 import akka.actor.InvalidMessageException
 import akka.{ actor ⇒ untyped }
 import akka.actor.typed._
-import akka.util.Helpers
+import akka.util.{ Helpers, OptionVal }
 import akka.{ actor ⇒ a }
-import akka.util.Unsafe.{ instance ⇒ unsafe }
 
 import scala.collection.immutable.TreeMap
 import scala.concurrent.ExecutionContextExecutor
 import scala.concurrent.duration.FiniteDuration
 import akka.annotation.InternalApi
-import akka.actor.typed.internal.{ ActorContextImpl, ActorRefImpl, ActorSystemStub }
-
-import scala.annotation.tailrec
-import scala.util.control.NonFatal
+import akka.actor.typed.internal._
+import akka.actor.typed.internal.adapter.LoggerAdapterImpl
+import akka.event.Logging.{ Info, LogEvent, LogLevel }
+import akka.event.{ Logging, LoggingAdapter }
 
 /**
  * A local synchronous ActorRef that invokes the given function for every message send.
- * This reference can be watched and will do the right thing when it receives a [[akka.actor.typed.internal.DeathWatchNotification]].
  * This reference cannot watch other references.
  */
 private[akka] final class FunctionRef[-T](
   _path:      a.ActorPath,
   send:       (T, FunctionRef[T]) ⇒ Unit,
   _terminate: FunctionRef[T] ⇒ Unit)
-  extends WatchableRef[T](_path) {
+  extends ActorRef[T] with ActorRefImpl[T] {
 
   override def tell(msg: T): Unit = {
     if (msg == null) throw InvalidMessageException("[null] is not an allowed message")
-    if (isAlive)
-      try send(msg, this) catch {
-        case NonFatal(_) ⇒ // nothing we can do here
-      }
-    else () // we don’t have deadLetters available
+    send(msg, this)
   }
 
-  import internal._
-
-  override def sendSystem(signal: SystemMessage): Unit = signal match {
-    case internal.Create()                     ⇒ // nothing to do
-    case internal.DeathWatchNotification(_, _) ⇒ // we’re not watching, and we’re not a parent either
-    case internal.Terminate()                  ⇒ doTerminate()
-    case internal.Watch(watchee, watcher)      ⇒ if (watchee == this && watcher != this) addWatcher(watcher.sorryForNothing)
-    case internal.Unwatch(watchee, watcher)    ⇒ if (watchee == this && watcher != this) remWatcher(watcher.sorryForNothing)
-    case NoMessage                             ⇒ // nothing to do
-  }
-
+  override def path = _path
+  override def sendSystem(signal: SystemMessage): Unit = {}
   override def isLocal = true
-
-  override def terminate(): Unit = _terminate(this)
 }
+
+final case class CapturedLogEvent(logLevel: LogLevel, message: String, cause: OptionVal[Throwable], marker: OptionVal[LogMarker])
 
 /**
- * The mechanics for synthetic ActorRefs that have a lifecycle and support being watched.
+ * INTERNAL API
+ *
+ * Captures log events for test inspection
  */
-private[typed] abstract class WatchableRef[-T](override val path: a.ActorPath) extends ActorRef[T] with ActorRefImpl[T] {
-  import WatchableRef._
+@InternalApi private[akka] final class StubbedLogger extends LoggerAdapterImpl(null, null, null, null) {
 
-  /**
-   * Callback that is invoked when this ref has terminated. Even if doTerminate() is
-   * called multiple times, this callback is invoked only once.
-   */
-  protected def terminate(): Unit
+  private var logBuffer: List[CapturedLogEvent] = Nil
 
-  type S = Set[ActorRefImpl[Nothing]]
-  @volatile private[this] var _watchedBy: S = Set.empty
+  override def isErrorEnabled: Boolean = true
+  override def isWarningEnabled: Boolean = true
+  override def isInfoEnabled: Boolean = true
+  override def isDebugEnabled: Boolean = true
 
-  protected def isAlive: Boolean = _watchedBy != null
+  override protected def notifyError(message: String, cause: OptionVal[Throwable], marker: OptionVal[LogMarker]): Unit =
+    logBuffer = CapturedLogEvent(Logging.ErrorLevel, message, cause, marker) :: logBuffer
 
-  protected def doTerminate(): Unit = {
-    val watchedBy = unsafe.getAndSetObject(this, watchedByOffset, null).asInstanceOf[S]
-    if (watchedBy != null) {
-      try terminate() catch { case NonFatal(ex) ⇒ }
-      if (watchedBy.nonEmpty) watchedBy foreach sendTerminated
-    }
-  }
+  override protected def notifyWarning(message: String, marker: OptionVal[LogMarker], cause: OptionVal[Throwable]): Unit =
+    logBuffer = CapturedLogEvent(Logging.WarningLevel, message, OptionVal.None, marker) :: logBuffer
 
-  private def sendTerminated(watcher: ActorRefImpl[Nothing]): Unit =
-    watcher.sendSystem(internal.DeathWatchNotification(this, null))
+  override protected def notifyInfo(message: String, marker: OptionVal[LogMarker]): Unit =
+    logBuffer = CapturedLogEvent(Logging.InfoLevel, message, OptionVal.None, marker) :: logBuffer
 
-  @tailrec final protected def addWatcher(watcher: ActorRefImpl[Nothing]): Unit =
-    _watchedBy match {
-      case null ⇒ sendTerminated(watcher)
-      case watchedBy ⇒
-        if (!watchedBy.contains(watcher))
-          if (!unsafe.compareAndSwapObject(this, watchedByOffset, watchedBy, watchedBy + watcher))
-            addWatcher(watcher) // try again
-    }
+  override protected def notifyDebug(message: String, marker: OptionVal[LogMarker]): Unit =
+    logBuffer = CapturedLogEvent(Logging.DebugLevel, message, OptionVal.None, marker) :: logBuffer
 
-  @tailrec final protected def remWatcher(watcher: ActorRefImpl[Nothing]): Unit = {
-    _watchedBy match {
-      case null ⇒ // do nothing...
-      case watchedBy ⇒
-        if (watchedBy.contains(watcher))
-          if (!unsafe.compareAndSwapObject(this, watchedByOffset, watchedBy, watchedBy - watcher))
-            remWatcher(watcher) // try again
-    }
-  }
-}
+  def logEntries: List[CapturedLogEvent] = logBuffer.reverse
+  def clearLog(): Unit = logBuffer = Nil
 
-private[typed] object WatchableRef {
-  val watchedByOffset = unsafe.objectFieldOffset(classOf[WatchableRef[_]].getDeclaredField("_watchedBy"))
 }
 
 /**
@@ -123,11 +87,9 @@ private[typed] object WatchableRef {
 
   override val self = selfInbox.ref
   override val system = new ActorSystemStub("StubbedActorContext")
-  // Not used for a stubbed actor context
-  override def mailboxCapacity = 1
-
   private var _children = TreeMap.empty[String, TestInbox[_]]
   private val childName = Iterator from 0 map (Helpers.base64(_))
+  private val loggingAdapter = new StubbedLogger
 
   override def children: Iterable[ActorRef[Nothing]] = _children.values map (_.ref)
   def childrenNames: Iterable[String] = _children.keys
@@ -153,11 +115,12 @@ private[typed] object WatchableRef {
    * Do not actually stop the child inbox, only simulate the liveness check.
    * Removal is asynchronous, explicit removeInbox is needed from outside afterwards.
    */
-  override def stop[U](child: ActorRef[U]): Boolean = {
-    _children.get(child.path.name) match {
-      case None        ⇒ false
-      case Some(inbox) ⇒ inbox.ref == child
-    }
+  override def stop[U](child: ActorRef[U]): Unit = {
+    if (child.path.parent != self.path) throw new IllegalArgumentException(
+      "Only direct children of an actor can be stopped through the actor context, " +
+        s"but [$child] is not a child of [$self]. Stopping other actors has to be expressed as " +
+        "an explicit stop message that the actor accepts.")
+    else ()
   }
   override def watch[U](other: ActorRef[U]): Unit = ()
   override def watchWith[U](other: ActorRef[U], msg: T): Unit = ()
@@ -176,7 +139,7 @@ private[typed] object WatchableRef {
   /**
    * INTERNAL API
    */
-  @InternalApi private[akka] def internalSpawnAdapter[U](f: U ⇒ T, name: String): ActorRef[U] = {
+  @InternalApi private[akka] def internalSpawnMessageAdapter[U](f: U ⇒ T, name: String): ActorRef[U] = {
 
     val n = if (name != "") s"${childName.next()}-$name" else childName.next()
     val i = TestInbox[U](n)
@@ -210,4 +173,17 @@ private[typed] object WatchableRef {
   def removeChildInbox(child: ActorRef[Nothing]): Unit = _children -= child.path.name
 
   override def toString: String = s"Inbox($self)"
+
+  override def log: Logger = loggingAdapter
+
+  /**
+   * The log entries logged through ctx.log.{debug, info, warn, error} are captured and can be inspected through
+   * this method.
+   */
+  def logEntries: List[CapturedLogEvent] = loggingAdapter.logEntries
+
+  /**
+   * Clear the log entries
+   */
+  def clearLog(): Unit = loggingAdapter.clearLog()
 }

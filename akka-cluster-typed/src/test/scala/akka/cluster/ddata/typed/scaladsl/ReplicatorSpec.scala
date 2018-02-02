@@ -1,18 +1,18 @@
 /**
- * Copyright (C) 2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.cluster.ddata.typed.scaladsl
 
 import akka.actor.Scheduler
-import akka.actor.typed.{ ActorRef, ActorSystem, Behavior, StartSupport, TypedSpec }
-import akka.actor.typed.scaladsl.Actor
+import akka.actor.typed.{ ActorRef, Behavior, TypedAkkaSpecWithShutdown }
 import akka.actor.typed.scaladsl.AskPattern._
+import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter._
-import akka.testkit.typed.TestKitSettings
-import akka.testkit.typed.scaladsl._
 import akka.cluster.Cluster
-import akka.cluster.ddata.{ GCounter, GCounterKey, ReplicatedData }
 import akka.cluster.ddata.typed.scaladsl.Replicator._
+import akka.cluster.ddata.{ GCounter, GCounterKey, ReplicatedData }
+import akka.testkit.typed.scaladsl._
+import akka.testkit.typed.{ TestKit, TestKitSettings }
 import akka.util.Timeout
 import com.typesafe.config.ConfigFactory
 import org.scalatest.concurrent.Eventually
@@ -24,6 +24,7 @@ object ReplicatorSpec {
 
   val config = ConfigFactory.parseString(
     """
+    akka.loglevel = DEBUG
     akka.actor.provider = "cluster"
     akka.remote.netty.tcp.port = 0
     akka.remote.artery.canonical.port = 0
@@ -42,43 +43,44 @@ object ReplicatorSpec {
   val Key = GCounterKey("counter")
 
   def client(replicator: ActorRef[Replicator.Command])(implicit cluster: Cluster): Behavior[ClientCommand] =
-    Actor.deferred[ClientCommand] { ctx ⇒
+    Behaviors.deferred[ClientCommand] { ctx ⇒
+
       val updateResponseAdapter: ActorRef[Replicator.UpdateResponse[GCounter]] =
-        ctx.spawnAdapter(InternalUpdateResponse.apply)
+        ctx.messageAdapter(InternalUpdateResponse.apply)
 
       val getResponseAdapter: ActorRef[Replicator.GetResponse[GCounter]] =
-        ctx.spawnAdapter(InternalGetResponse.apply)
+        ctx.messageAdapter(InternalGetResponse.apply)
 
       val changedAdapter: ActorRef[Replicator.Changed[GCounter]] =
-        ctx.spawnAdapter(InternalChanged.apply)
+        ctx.messageAdapter(InternalChanged.apply)
 
       replicator ! Replicator.Subscribe(Key, changedAdapter)
 
       def behavior(cachedValue: Int): Behavior[ClientCommand] = {
-        Actor.immutable[ClientCommand] { (ctx, msg) ⇒
+        Behaviors.immutable[ClientCommand] { (ctx, msg) ⇒
           msg match {
             case Increment ⇒
               replicator ! Replicator.Update(Key, GCounter.empty, Replicator.WriteLocal, updateResponseAdapter)(_ + 1)
-              Actor.same
+              Behaviors.same
 
             case GetValue(replyTo) ⇒
               replicator ! Replicator.Get(Key, Replicator.ReadLocal, getResponseAdapter, Some(replyTo))
-              Actor.same
+              Behaviors.same
 
             case GetCachedValue(replyTo) ⇒
               replicator ! Replicator.Get(Key, Replicator.ReadLocal, getResponseAdapter, Some(replyTo))
-              Actor.same
+              Behaviors.same
 
             case internal: InternalMsg ⇒ internal match {
-              case InternalUpdateResponse(_) ⇒ Actor.same // ok
+              case InternalUpdateResponse(_) ⇒ Behaviors.same // ok
 
               case InternalGetResponse(rsp @ Replicator.GetSuccess(Key, Some(replyTo: ActorRef[Int] @unchecked))) ⇒
                 val value = rsp.get(Key).value.toInt
                 replyTo ! value
-                Actor.same
+                Behaviors.same
 
               case InternalGetResponse(rsp) ⇒
-                Actor.unhandled // not dealing with failures
+                Behaviors.unhandled // not dealing with failures
 
               case InternalChanged(chg @ Replicator.Changed(Key)) ⇒
                 val value = chg.get(Key).value.intValue
@@ -107,14 +109,14 @@ object ReplicatorSpec {
 
       val reply4: Future[ReplicaCount] = replicator ? Replicator.GetReplicaCount()
 
-      // supress unused compiler warnings
+      // suppress unused compiler warnings
       println("" + reply1 + reply2 + reply3 + reply4)
     }
   }
 
 }
 
-class ReplicatorSpec extends TypedSpec(ReplicatorSpec.config) with Eventually with StartSupport {
+class ReplicatorSpec extends TestKit(ReplicatorSpec.config) with TypedAkkaSpecWithShutdown with Eventually {
 
   import ReplicatorSpec._
 
@@ -125,41 +127,41 @@ class ReplicatorSpec extends TypedSpec(ReplicatorSpec.config) with Eventually wi
   "Replicator" must {
 
     "have API for Update and Get" in {
-      val replicator = start(Replicator.behavior(settings))
-      val c = start(client(replicator))
+      val replicator = spawn(Replicator.behavior(settings))
+      val c = spawn(client(replicator))
 
       val probe = TestProbe[Int]
       c ! Increment
       c ! GetValue(probe.ref)
-      probe.expectMsg(1)
+      probe.expectMessage(1)
     }
 
     "have API for Subscribe" in {
-      val replicator = start(Replicator.behavior(settings))
-      val c = start(client(replicator))
+      val replicator = spawn(Replicator.behavior(settings))
+      val c = spawn(client(replicator))
 
       val probe = TestProbe[Int]
       c ! Increment
       c ! Increment
       eventually {
         c ! GetCachedValue(probe.ref)
-        probe.expectMsg(2)
+        probe.expectMessage(2)
       }
       c ! Increment
       eventually {
         c ! GetCachedValue(probe.ref)
-        probe.expectMsg(3)
+        probe.expectMessage(3)
       }
     }
 
     "have an extension" in {
       val replicator = DistributedData(system).replicator
-      val c = start(client(replicator))
+      val c = spawn(client(replicator))
 
       val probe = TestProbe[Int]
       c ! Increment
       c ! GetValue(probe.ref)
-      probe.expectMsg(1)
+      probe.expectMessage(1)
     }
   }
 }

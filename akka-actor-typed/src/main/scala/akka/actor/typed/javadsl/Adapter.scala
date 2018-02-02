@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.actor.typed.javadsl
 
@@ -74,7 +74,7 @@ object Adapter {
   def unwatch[U](ctx: ActorContext[_], other: akka.actor.ActorRef): Unit =
     ctx.unwatch(other)
 
-  def stop(ctx: ActorContext[_], child: akka.actor.ActorRef): Boolean =
+  def stop(ctx: ActorContext[_], child: akka.actor.ActorRef): Unit =
     ctx.stop(child)
 
   def actorOf(ctx: ActorContext[_], props: akka.actor.Props): akka.actor.ActorRef =

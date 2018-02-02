@@ -1,36 +1,31 @@
 /**
- * Copyright (C) 2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.actor.typed
 package scaladsl
 
-import akka.testkit.typed.{ BehaviorTestkit, TestKitSettings }
+import akka.testkit.typed.TestKit
 import akka.testkit.typed.scaladsl.TestProbe
-import scala.concurrent.duration.DurationInt
 
-class ImmutablePartialSpec extends TypedSpec with StartSupport {
-
-  private implicit val testSettings = TestKitSettings(system)
+class ImmutablePartialSpec extends TestKit with TypedAkkaSpecWithShutdown {
 
   "An immutable partial" must {
 
     "correctly install the message handler" in {
       val probe = TestProbe[Command]("probe")
       val behavior =
-        Actor.immutablePartial[Command] {
+        Behaviors.immutablePartial[Command] {
           case (_, Command2) ⇒
             probe.ref ! Command2
-            Actor.same
+            Behaviors.same
         }
-      val context = new BehaviorTestkit("ctx", behavior)
+      val actor = spawn(behavior)
 
-      context.run(Command1)
-      context.currentBehavior shouldBe behavior
-      probe.expectNoMsg(100.milliseconds)
+      actor ! Command1
+      probe.expectNoMessage()
 
-      context.run(Command2)
-      context.currentBehavior shouldBe behavior
-      probe.expectMsg(Command2)
+      actor ! Command2
+      probe.expectMessage(Command2)
     }
   }
 

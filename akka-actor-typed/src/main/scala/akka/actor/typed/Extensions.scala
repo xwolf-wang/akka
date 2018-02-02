@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.actor.typed
 
@@ -117,7 +117,7 @@ abstract class ExtensionId[T <: Extension] {
 /**
  * API for registering and looking up extensions.
  *
- * Not intended to be extended by user code.
+ * Not for user extension.
  */
 @DoNotInherit
 trait Extensions {

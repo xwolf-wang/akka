@@ -2,7 +2,6 @@ package akka.cluster.typed;
 
 import akka.cluster.ClusterEvent;
 import akka.actor.typed.ActorSystem;
-import akka.testkit.typed.TestKitSettings;
 import akka.testkit.typed.javadsl.TestProbe;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
@@ -12,8 +11,6 @@ import scala.concurrent.Await;
 import scala.concurrent.duration.Duration;
 
 public class ClusterApiTest extends JUnitSuite {
-
-
 
   @Test
   public void joinLeaveAndObserve() throws Exception {
@@ -35,27 +32,25 @@ public class ClusterApiTest extends JUnitSuite {
     ActorSystem<?> system2 = ActorSystem.wrap(akka.actor.ActorSystem.create("ClusterApiTest", config));
 
     try {
-      TestKitSettings testKitSettings = new TestKitSettings(system1.settings().config());
-
       Cluster cluster1 = Cluster.get(system1);
       Cluster cluster2 = Cluster.get(system2);
 
-      TestProbe<ClusterEvent.ClusterDomainEvent> probe1 = new TestProbe<>(system1, testKitSettings);
+      TestProbe<ClusterEvent.ClusterDomainEvent> probe1 = new TestProbe<>(system1);
 
       cluster1.subscriptions().tell(new Subscribe<>(probe1.ref().narrow(), SelfUp.class));
       cluster1.manager().tell(new Join(cluster1.selfMember().address()));
-      probe1.expectMsgType(SelfUp.class);
+      probe1.expectMessageType(SelfUp.class);
 
-      TestProbe<ClusterEvent.ClusterDomainEvent> probe2 = new TestProbe<>(system2, testKitSettings);
+      TestProbe<ClusterEvent.ClusterDomainEvent> probe2 = new TestProbe<>(system2);
       cluster2.subscriptions().tell(new Subscribe<>(probe2.ref().narrow(), SelfUp.class));
       cluster2.manager().tell(new Join(cluster1.selfMember().address()));
-      probe2.expectMsgType(SelfUp.class);
+      probe2.expectMessageType(SelfUp.class);
 
 
       cluster2.subscriptions().tell(new Subscribe<>(probe2.ref().narrow(), SelfRemoved.class));
       cluster2.manager().tell(new Leave(cluster2.selfMember().address()));
 
-      probe2.expectMsgType(SelfRemoved.class);
+      probe2.expectMessageType(SelfRemoved.class);
     } finally {
       // TODO no java API to terminate actor system
       Await.result(system1.terminate().zip(system2.terminate()), Duration.create("5 seconds"));

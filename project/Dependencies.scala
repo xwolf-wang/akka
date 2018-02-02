@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2016-2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka
 
@@ -117,7 +117,7 @@ object Dependencies {
       // If changed, update akka-docs/build.sbt as well
       val sigarLoader = "io.kamon" % "sigar-loader" % "1.6.6-rev002" % "optional;provided;test" // ApacheV2
 
-      val levelDB = "org.iq80.leveldb" % "leveldb" % "0.9" % "optional;provided" // ApacheV2
+      val levelDB = "org.iq80.leveldb" % "leveldb" % "0.10" % "optional;provided" // ApacheV2
       val levelDBNative = "org.fusesource.leveldbjni" % "leveldbjni-all" % "1.8" % "optional;provided" // New BSD
     }
 

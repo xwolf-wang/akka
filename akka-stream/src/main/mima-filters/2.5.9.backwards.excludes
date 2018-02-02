@@ -1,0 +1,14 @@
+# #24129 Add maxRestarts to RestartSource, Sink and Flow
+ProblemFilters.exclude[DirectMissingMethodProblem]("akka.stream.scaladsl.RestartWithBackoffSink.this")
+ProblemFilters.exclude[DirectMissingMethodProblem]("akka.stream.scaladsl.RestartWithBackoffFlow.this")
+ProblemFilters.exclude[DirectMissingMethodProblem]("akka.stream.scaladsl.RestartWithBackoffLogic.this")
+ProblemFilters.exclude[DirectMissingMethodProblem]("akka.stream.scaladsl.RestartWithBackoffSource.this")
+
+# #23604 Typed stream adapters
+ProblemFilters.exclude[DirectMissingMethodProblem]("akka.stream.impl.ActorRefSinkActor.props")
+ProblemFilters.exclude[DirectMissingMethodProblem]("akka.stream.impl.ActorRefSink.this")
+ProblemFilters.exclude[DirectMissingMethodProblem]("akka.stream.impl.ActorRefSinkActor.this")
+ProblemFilters.exclude[DirectMissingMethodProblem]("akka.stream.impl.ActorRefSourceActor.props")
+ProblemFilters.exclude[DirectMissingMethodProblem]("akka.stream.impl.ActorRefSource.this")
+ProblemFilters.exclude[DirectMissingMethodProblem]("akka.stream.impl.ActorRefBackpressureSinkStage.this")
+ProblemFilters.exclude[DirectMissingMethodProblem]("akka.stream.impl.ActorRefSourceActor.this")

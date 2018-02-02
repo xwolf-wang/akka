@@ -1,11 +1,12 @@
 /**
- * Copyright (C) 2015-2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.stream.impl
 
 import akka.NotUsed
 import akka.actor._
 import akka.annotation.{ DoNotInherit, InternalApi }
+import akka.dispatch.Dispatchers
 import akka.stream._
 import akka.stream.impl.StreamLayout.AtomicModule
 import org.reactivestreams._
@@ -98,19 +99,24 @@ import akka.util.OptionVal
  * INTERNAL API
  */
 @InternalApi private[akka] final class ActorRefSource[Out](
-  bufferSize: Int, overflowStrategy: OverflowStrategy, val attributes: Attributes, shape: SourceShape[Out])
+  completionMatcher: PartialFunction[Any, Unit],
+  failureMatcher:    PartialFunction[Any, Throwable],
+  bufferSize:        Int, overflowStrategy: OverflowStrategy, val attributes: Attributes, shape: SourceShape[Out])
   extends SourceModule[Out, ActorRef](shape) {
 
   override protected def label: String = s"ActorRefSource($bufferSize, $overflowStrategy)"
 
   override def create(context: MaterializationContext) = {
     val mat = ActorMaterializerHelper.downcast(context.materializer)
-    val ref = mat.actorOf(context, ActorRefSourceActor.props(bufferSize, overflowStrategy, mat.settings))
+    val ref = mat.actorOf(context, ActorRefSourceActor.props(
+      completionMatcher,
+      failureMatcher,
+      bufferSize, overflowStrategy, mat.settings))
     (akka.stream.actor.ActorPublisher[Out](ref), ref)
   }
 
   override protected def newInstance(shape: SourceShape[Out]): SourceModule[Out, ActorRef] =
-    new ActorRefSource[Out](bufferSize, overflowStrategy, attributes, shape)
+    new ActorRefSource[Out](completionMatcher, failureMatcher, bufferSize, overflowStrategy, attributes, shape)
   override def withAttributes(attr: Attributes): SourceModule[Out, ActorRef] =
-    new ActorRefSource(bufferSize, overflowStrategy, attr, amendShape(attr))
+    new ActorRefSource(completionMatcher, failureMatcher, bufferSize, overflowStrategy, attr, amendShape(attr))
 }

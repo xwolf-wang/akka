@@ -1,15 +1,21 @@
 /**
- * Copyright (C) 2017 Lightbend Inc. <http://www.lightbend.com/>
+ * Copyright (C) 2017-2018 Lightbend Inc. <http://www.lightbend.com/>
  */
 package akka.actor.typed
 
-import scala.concurrent.duration._
-import scala.concurrent.Future
+import akka.actor.typed.scaladsl.Behaviors._
+import akka.actor.typed.scaladsl.{ Behaviors, AskPattern }
+import akka.actor.{ ActorInitializationException, DeadLetterSuppression, InvalidMessageException }
+import akka.testkit.AkkaSpec
+import akka.testkit.TestEvent.Mute
 import com.typesafe.config.ConfigFactory
-import akka.actor.{ DeadLetterSuppression, InvalidMessageException }
-import akka.actor.typed.scaladsl.Actor
+import org.scalactic.CanEqual
 
+import scala.concurrent.{ Await, Future }
+import scala.concurrent.duration._
 import scala.language.existentials
+import scala.reflect.ClassTag
+import scala.util.control.{ NoStackTrace, NonFatal }
 
 object ActorContextSpec {
 
@@ -78,18 +84,18 @@ object ActorContextSpec {
   final case class Adapter(a: ActorRef[Command]) extends Event
 
   def subject(monitor: ActorRef[Monitor], ignorePostStop: Boolean): Behavior[Command] =
-    Actor.immutable[Command] {
+    Behaviors.immutable[Command] {
       (ctx, message) ⇒
         message match {
           case ReceiveTimeout ⇒
             monitor ! GotReceiveTimeout
-            Actor.same
+            Behaviors.same
           case Ping(replyTo) ⇒
             replyTo ! Pong1
-            Actor.same
+            Behaviors.same
           case Miss(replyTo) ⇒
             replyTo ! Missed
-            Actor.unhandled
+            Behaviors.unhandled
           case Renew(replyTo) ⇒
             replyTo ! Renewed
             subject(monitor, ignorePostStop)
@@ -97,87 +103,91 @@ object ActorContextSpec {
             throw ex
           case MkChild(name, mon, replyTo) ⇒
             val child = name match {
-              case None    ⇒ ctx.spawnAnonymous(Actor.supervise(subject(mon, ignorePostStop)).onFailure(SupervisorStrategy.restart))
-              case Some(n) ⇒ ctx.spawn(Actor.supervise(subject(mon, ignorePostStop)).onFailure(SupervisorStrategy.restart), n)
+              case None    ⇒ ctx.spawnAnonymous(Behaviors.supervise(subject(mon, ignorePostStop)).onFailure(SupervisorStrategy.restart))
+              case Some(n) ⇒ ctx.spawn(Behaviors.supervise(subject(mon, ignorePostStop)).onFailure(SupervisorStrategy.restart), n)
             }
             replyTo ! Created(child)
-            Actor.same
+            Behaviors.same
           case SetTimeout(d, replyTo) ⇒
             d match {
               case f: FiniteDuration ⇒ ctx.setReceiveTimeout(f, ReceiveTimeout)
               case _                 ⇒ ctx.cancelReceiveTimeout()
             }
             replyTo ! TimeoutSet
-            Actor.same
+            Behaviors.same
           case Schedule(delay, target, msg, replyTo) ⇒
             replyTo ! Scheduled
             ctx.schedule(delay, target, msg)
-            Actor.same
+            Behaviors.same
           case Stop ⇒
-            Actor.stopped
+            Behaviors.stopped
           case Kill(ref, replyTo) ⇒
-            if (ctx.stop(ref)) replyTo ! Killed
-            else replyTo ! NotKilled
-            Actor.same
+            try {
+              ctx.stop(ref)
+              replyTo ! Killed
+            } catch {
+              case ex: IllegalArgumentException ⇒ replyTo ! NotKilled
+            }
+            Behaviors.same
           case Watch(ref, replyTo) ⇒
             ctx.watch(ref)
             replyTo ! Watched
-            Actor.same
+            Behaviors.same
           case Unwatch(ref, replyTo) ⇒
             ctx.unwatch(ref)
             replyTo ! Unwatched
-            Actor.same
+            Behaviors.same
           case GetInfo(replyTo) ⇒
             replyTo ! Info(ctx.self, ctx.system)
-            Actor.same
+            Behaviors.same
           case GetChild(name, replyTo) ⇒
             replyTo ! Child(ctx.child(name))
-            Actor.same
+            Behaviors.same
           case GetChildren(replyTo) ⇒
             replyTo ! Children(ctx.children.toSet)
-            Actor.same
+            Behaviors.same
           case BecomeInert(replyTo) ⇒
             replyTo ! BecameInert
-            Actor.immutable {
+            Behaviors.immutable {
               case (_, Ping(replyTo)) ⇒
                 replyTo ! Pong2
-                Actor.same
+                Behaviors.same
               case (_, Throw(ex)) ⇒
                 throw ex
-              case _ ⇒ Actor.unhandled
+              case _ ⇒ Behaviors.unhandled
             }
           case BecomeCareless(replyTo) ⇒
             replyTo ! BecameCareless
-            Actor.immutable[Command] {
-              case (_, _) ⇒ Actor.unhandled
+            Behaviors.immutable[Command] {
+              case (_, _) ⇒ Behaviors.unhandled
             } onSignal {
-              case (_, PostStop) if ignorePostStop ⇒ Actor.same // ignore PostStop here
-              case (_, Terminated(_))              ⇒ Actor.unhandled
+              case (_, PostStop) if ignorePostStop ⇒ Behaviors.same // ignore PostStop here
+              case (_, Terminated(_))              ⇒ Behaviors.unhandled
               case (_, sig) ⇒
                 monitor ! GotSignal(sig)
-                Actor.same
+                Behaviors.same
             }
           case GetAdapter(replyTo, name) ⇒
-            replyTo ! Adapter(ctx.spawnAdapter(identity, name))
-            Actor.same
+            replyTo ! Adapter(ctx.spawnMessageAdapter(identity, name))
+            Behaviors.same
         }
     } onSignal {
-      case (_, PostStop) if ignorePostStop ⇒ Actor.same // ignore PostStop here
-      case (ctx, signal)                   ⇒ monitor ! GotSignal(signal); Actor.same
+      case (_, PostStop) if ignorePostStop ⇒ Behaviors.same // ignore PostStop here
+      case (ctx, signal)                   ⇒ monitor ! GotSignal(signal); Behaviors.same
     }
 
   def oldSubject(monitor: ActorRef[Monitor], ignorePostStop: Boolean): Behavior[Command] = {
-    Actor.immutable[Command] {
+    Behaviors.immutable[Command] {
       case (ctx, message) ⇒ message match {
         case ReceiveTimeout ⇒
           monitor ! GotReceiveTimeout
-          Actor.same
+          Behaviors.same
         case Ping(replyTo) ⇒
           replyTo ! Pong1
-          Actor.same
+          Behaviors.same
         case Miss(replyTo) ⇒
           replyTo ! Missed
-          Actor.unhandled
+          Behaviors.unhandled
         case Renew(replyTo) ⇒
           replyTo ! Renewed
           subject(monitor, ignorePostStop)
@@ -185,93 +195,214 @@ object ActorContextSpec {
           throw ex
         case MkChild(name, mon, replyTo) ⇒
           val child = name match {
-            case None    ⇒ ctx.spawnAnonymous(Actor.supervise(subject(mon, ignorePostStop)).onFailure[Throwable](SupervisorStrategy.restart))
-            case Some(n) ⇒ ctx.spawn(Actor.supervise(subject(mon, ignorePostStop)).onFailure[Throwable](SupervisorStrategy.restart), n)
+            case None    ⇒ ctx.spawnAnonymous(Behaviors.supervise(subject(mon, ignorePostStop)).onFailure[Throwable](SupervisorStrategy.restart))
+            case Some(n) ⇒ ctx.spawn(Behaviors.supervise(subject(mon, ignorePostStop)).onFailure[Throwable](SupervisorStrategy.restart), n)
           }
           replyTo ! Created(child)
-          Actor.same
+          Behaviors.same
         case SetTimeout(d, replyTo) ⇒
           d match {
             case f: FiniteDuration ⇒ ctx.setReceiveTimeout(f, ReceiveTimeout)
             case _                 ⇒ ctx.cancelReceiveTimeout()
           }
           replyTo ! TimeoutSet
-          Actor.same
+          Behaviors.same
         case Schedule(delay, target, msg, replyTo) ⇒
           replyTo ! Scheduled
           ctx.schedule(delay, target, msg)
-          Actor.same
+          Behaviors.same
         case Stop ⇒
-          Actor.stopped
+          Behaviors.stopped
         case Kill(ref, replyTo) ⇒
-          if (ctx.stop(ref)) replyTo ! Killed
-          else replyTo ! NotKilled
-          Actor.same
+          try {
+            ctx.stop(ref)
+            replyTo ! Killed
+          } catch {
+            case ex: IllegalArgumentException ⇒ replyTo ! NotKilled
+          }
+          Behaviors.same
         case Watch(ref, replyTo) ⇒
           ctx.watch(ref)
           replyTo ! Watched
-          Actor.same
+          Behaviors.same
         case Unwatch(ref, replyTo) ⇒
           ctx.unwatch(ref)
           replyTo ! Unwatched
-          Actor.same
+          Behaviors.same
         case GetInfo(replyTo) ⇒
           replyTo ! Info(ctx.self, ctx.system)
-          Actor.same
+          Behaviors.same
         case GetChild(name, replyTo) ⇒
           replyTo ! Child(ctx.child(name))
-          Actor.same
+          Behaviors.same
         case GetChildren(replyTo) ⇒
           replyTo ! Children(ctx.children.toSet)
-          Actor.same
+          Behaviors.same
         case BecomeInert(replyTo) ⇒
           replyTo ! BecameInert
-          Actor.immutable[Command] {
-            case (_, Ping(replyTo)) ⇒
-              replyTo ! Pong2
-              Actor.same
+          Behaviors.immutable[Command] {
+            case (_, Ping(r)) ⇒
+              r ! Pong2
+              Behaviors.same
             case (_, Throw(ex)) ⇒
               throw ex
-            case _ ⇒ Actor.same
+            case _ ⇒ Behaviors.same
           }
         case BecomeCareless(replyTo) ⇒
           replyTo ! BecameCareless
-          Actor.immutable[Command] {
-            case _ ⇒ Actor.unhandled
+          Behaviors.immutable[Command] {
+            case _ ⇒ Behaviors.unhandled
           } onSignal {
-            case (_, PostStop) if ignorePostStop ⇒ Actor.same // ignore PostStop here
-            case (_, Terminated(_))              ⇒ Actor.unhandled
+            case (_, PostStop) if ignorePostStop ⇒ Behaviors.same // ignore PostStop here
+            case (_, Terminated(_))              ⇒ Behaviors.unhandled
             case (_, sig) ⇒
               monitor ! GotSignal(sig)
-              Actor.same
+              Behaviors.same
           }
         case GetAdapter(replyTo, name) ⇒
-          replyTo ! Adapter(ctx.spawnAdapter(identity, name))
-          Actor.same
+          replyTo ! Adapter(ctx.spawnMessageAdapter(identity, name))
+          Behaviors.same
       }
     } onSignal {
-      case (_, PostStop) if ignorePostStop ⇒ Actor.same // ignore PostStop here
+      case (_, PostStop) if ignorePostStop ⇒ Behaviors.same // ignore PostStop here
       case (_, signal) ⇒
         monitor ! GotSignal(signal)
-        Actor.same
+        Behaviors.same
     }
   }
 
+  sealed abstract class Start
+  case object Start extends Start
+
+  sealed trait GuardianCommand
+  case class RunTest[T](name: String, behavior: Behavior[T], replyTo: ActorRef[Status], timeout: FiniteDuration) extends GuardianCommand
+  case class Terminate(reply: ActorRef[Status]) extends GuardianCommand
+  case class Create[T](behavior: Behavior[T], name: String)(val replyTo: ActorRef[ActorRef[T]]) extends GuardianCommand
+
+  sealed trait Status
+  case object Success extends Status
+  case class Failed(thr: Throwable) extends Status
+  case object Timedout extends Status
+
+  class SimulatedException(message: String) extends RuntimeException(message) with NoStackTrace
+
+  def guardian(outstanding: Map[ActorRef[_], ActorRef[Status]] = Map.empty): Behavior[GuardianCommand] =
+    Behaviors.immutable[GuardianCommand] {
+      case (ctx, r: RunTest[t]) ⇒
+        val test = ctx.spawn(r.behavior, r.name)
+        ctx.schedule(r.timeout, r.replyTo, Timedout)
+        ctx.watch(test)
+        guardian(outstanding + ((test, r.replyTo)))
+      case (_, Terminate(reply)) ⇒
+        reply ! Success
+        stopped
+      case (ctx, c: Create[t]) ⇒
+        c.replyTo ! ctx.spawn(c.behavior, c.name)
+        same
+    } onSignal {
+      case (ctx, t @ Terminated(test)) ⇒
+        outstanding get test match {
+          case Some(reply) ⇒
+            if (t.failure eq null) reply ! Success
+            else reply ! Failed(t.failure)
+            guardian(outstanding - test)
+          case None ⇒ same
+        }
+      case _ ⇒ same
+    }
 }
 
-abstract class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
-  """|akka {
-     |  loglevel = WARNING
-     |  actor.debug {
-     |    lifecycle = off
-     |    autoreceive = off
-     |  }
-     |  typed.loggers = ["akka.testkit.typed.TestEventListener"]
-     |}""".stripMargin)) {
-
+abstract class ActorContextSpec extends TypedAkkaSpec {
   import ActorContextSpec._
 
+  val config = ConfigFactory.parseString(
+    """
+     akka {
+       loglevel = WARNING
+       loggers = ["akka.testkit.TestEventListener"]
+       actor.debug {
+         lifecycle = off
+         autoreceive = off
+       }
+     }""")
+
+  implicit lazy val system: ActorSystem[GuardianCommand] =
+    ActorSystem(guardian(), AkkaSpec.getCallerName(classOf[ActorContextSpec]), config = Some(config withFallback AkkaSpec.testConf))
+
   val expectTimeout = 3.seconds
+  import AskPattern._
+
+  implicit def scheduler = system.scheduler
+
+  lazy val blackhole = await(system ? Create(immutable[Any] { case _ ⇒ same }, "blackhole"))
+
+  override def afterAll(): Unit = {
+    Await.result(system.terminate, timeout.duration)
+  }
+
+  // TODO remove after basing on ScalaTest 3 with async support
+  import akka.testkit._
+
+  def await[T](f: Future[T]): T = Await.result(f, timeout.duration * 1.1)
+
+  /**
+   * Run an Actor-based test. The test procedure is most conveniently
+   * formulated using the [[StepWise]] behavior type.
+   */
+  def runTest[T: ClassTag](name: String)(behavior: Behavior[T])(implicit system: ActorSystem[GuardianCommand]): Future[Status] =
+    system ? (RunTest(name, behavior, _, timeout.duration))
+
+  // TODO remove after basing on ScalaTest 3 with async support
+  def sync(f: Future[Status])(implicit system: ActorSystem[GuardianCommand]): Unit = {
+    def unwrap(ex: Throwable): Throwable = ex match {
+      case ActorInitializationException(_, _, ex) ⇒ ex
+      case other                                  ⇒ other
+    }
+
+    try await(f) match {
+      case Success ⇒ ()
+      case Failed(ex) ⇒
+        unwrap(ex) match {
+          case ex2: SimulatedException ⇒
+            throw ex2
+          case _ ⇒
+            println(system.printTree)
+            throw unwrap(ex)
+        }
+      case Timedout ⇒
+        println(system.printTree)
+        fail("test timed out")
+    } catch {
+      case ex: SimulatedException ⇒
+        throw ex
+      case NonFatal(ex) ⇒
+        println(system.printTree)
+        throw ex
+    }
+  }
+
+  def muteExpectedException[T <: Exception: ClassTag](
+    message:     String = null,
+    source:      String = null,
+    start:       String = "",
+    pattern:     String = null,
+    occurrences: Int    = Int.MaxValue)(implicit system: ActorSystem[GuardianCommand]): EventFilter = {
+    val filter = EventFilter(message, source, start, pattern, occurrences)
+    import scaladsl.adapter._
+    system.toUntyped.eventStream.publish(Mute(filter))
+    filter
+  }
+
+  // for ScalaTest === compare of Class objects
+  implicit def classEqualityConstraint[A, B]: CanEqual[Class[A], Class[B]] =
+    new CanEqual[Class[A], Class[B]] {
+      def areEqual(a: Class[A], b: Class[B]) = a == b
+    }
+
+  implicit def setEqualityConstraint[A, T <: Set[_ <: A]]: CanEqual[Set[A], T] =
+    new CanEqual[Set[A], T] {
+      def areEqual(a: Set[A], b: T) = a == b
+    }
 
   /**
    * The name for the set of tests to be instantiated, used for keeping the test case actors’ names unique.
@@ -286,7 +417,7 @@ abstract class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
   private def mySuite: String = suite + "Adapted"
 
   def setup(name: String, wrapper: Option[Behavior[Command] ⇒ Behavior[Command]] = None, ignorePostStop: Boolean = true)(
-    proc: (scaladsl.ActorContext[Event], StepWise.Steps[Event, ActorRef[Command]]) ⇒ StepWise.Steps[Event, _]): Future[TypedSpec.Status] =
+    proc: (scaladsl.ActorContext[Event], StepWise.Steps[Event, ActorRef[Command]]) ⇒ StepWise.Steps[Event, _]): Future[Status] =
     runTest(s"$mySuite-$name")(StepWise[Event] { (ctx, startWith) ⇒
       val b = behavior(ctx, ignorePostStop)
       val props = wrapper.map(_(b)).getOrElse(b)
@@ -356,7 +487,7 @@ abstract class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
     }
 
     "correctly wire the lifecycle hooks" in {
-      sync(setup("ctx01", Some(b ⇒ Actor.supervise(b).onFailure[Throwable](SupervisorStrategy.restart)), ignorePostStop = false) { (ctx, startWith) ⇒
+      sync(setup("ctx01", Some(b ⇒ Behaviors.supervise(b).onFailure[Throwable](SupervisorStrategy.restart)), ignorePostStop = false) { (ctx, startWith) ⇒
         val self = ctx.self
         val ex = new Exception("KABOOM1")
         startWith { subj ⇒
@@ -389,7 +520,7 @@ abstract class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
       sync(setup("ctx03") { (ctx, startWith) ⇒
         val self = ctx.self
         val ex = new Exception("KABOOM2")
-        startWith.mkChild(None, ctx.spawnAdapter(ChildEvent), self) {
+        startWith.mkChild(None, ctx.spawnMessageAdapter(ChildEvent), self) {
           case (subj, child) ⇒
             val log = muteExpectedException[Exception]("KABOOM2", occurrences = 1)
             child ! Throw(ex)
@@ -420,7 +551,7 @@ abstract class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
     "stop a child actor" in {
       sync(setup("ctx04") { (ctx, startWith) ⇒
         val self = ctx.self
-        startWith.mkChild(Some("A"), ctx.spawnAdapter(ChildEvent), self, inert = true) {
+        startWith.mkChild(Some("A"), ctx.spawnMessageAdapter(ChildEvent), self, inert = true) {
           case (subj, child) ⇒
             subj ! Kill(child, self)
             child
@@ -434,7 +565,7 @@ abstract class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
     }
 
     "reset behavior upon Restart" in {
-      sync(setup("ctx05", Some(Actor.supervise(_).onFailure(SupervisorStrategy.restart))) { (ctx, startWith) ⇒
+      sync(setup("ctx05", Some(Behaviors.supervise(_).onFailure(SupervisorStrategy.restart))) { (ctx, startWith) ⇒
         val self = ctx.self
         val ex = new Exception("KABOOM05")
         startWith
@@ -451,7 +582,7 @@ abstract class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
     "not reset behavior upon Resume" in {
       sync(setup(
         "ctx06",
-        Some(b ⇒ Actor.supervise(b).onFailure(SupervisorStrategy.resume))) { (ctx, startWith) ⇒
+        Some(b ⇒ Behaviors.supervise(b).onFailure(SupervisorStrategy.resume))) { (ctx, startWith) ⇒
           val self = ctx.self
           val ex = new Exception("KABOOM06")
           startWith
@@ -481,7 +612,7 @@ abstract class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
     "not stop non-child actor" in {
       sync(setup("ctx08") { (ctx, startWith) ⇒
         val self = ctx.self
-        startWith.mkChild(Some("A"), ctx.spawnAdapter(ChildEvent), self) {
+        startWith.mkChild(Some("A"), ctx.spawnMessageAdapter(ChildEvent), self) {
           case (subj, child) ⇒
             val other = ctx.spawn(behavior(ctx, ignorePostStop = true), "A")
             subj ! Kill(other, ctx.self)
@@ -495,7 +626,7 @@ abstract class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
     "watch a child actor before its termination" in {
       sync(setup("ctx10") { (ctx, startWith) ⇒
         val self = ctx.self
-        startWith.mkChild(None, ctx.spawnAdapter(ChildEvent), self) {
+        startWith.mkChild(None, ctx.spawnMessageAdapter(ChildEvent), self) {
           case (subj, child) ⇒
             subj ! Watch(child, self)
             child
@@ -511,7 +642,7 @@ abstract class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
     "watch a child actor after its termination" in {
       sync(setup("ctx11") { (ctx, startWith) ⇒
         val self = ctx.self
-        startWith.mkChild(None, ctx.spawnAdapter(ChildEvent), self).keep {
+        startWith.mkChild(None, ctx.spawnMessageAdapter(ChildEvent), self).keep {
           case (subj, child) ⇒
             ctx.watch(child)
             child ! Stop
@@ -529,7 +660,7 @@ abstract class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
     "unwatch a child actor before its termination" in {
       sync(setup("ctx12") { (ctx, startWith) ⇒
         val self = ctx.self
-        startWith.mkChild(None, ctx.spawnAdapter(ChildEvent), self).keep {
+        startWith.mkChild(None, ctx.spawnMessageAdapter(ChildEvent), self).keep {
           case (subj, child) ⇒
             subj ! Watch(child, self)
         }.expectMessageKeep(expectTimeout) {
@@ -551,7 +682,7 @@ abstract class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
     "terminate upon not handling Terminated" in {
       sync(setup("ctx13", ignorePostStop = false) { (ctx, startWith) ⇒
         val self = ctx.self
-        startWith.mkChild(None, ctx.spawnAdapter(ChildEvent), self).keep {
+        startWith.mkChild(None, ctx.spawnMessageAdapter(ChildEvent), self).keep {
           case (subj, child) ⇒
             muteExpectedException[DeathPactException]()
             subj ! Watch(child, self)
@@ -590,7 +721,7 @@ abstract class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
       sync(setup("ctx21") { (ctx, startWith) ⇒
         val self = ctx.self
         startWith
-          .mkChild(Some("B"), ctx.spawnAdapter(ChildEvent), self)
+          .mkChild(Some("B"), ctx.spawnMessageAdapter(ChildEvent), self)
           .stimulate(_._1 ! GetChild("A", self), _ ⇒ Child(None))
           .stimulate(_._1 ! GetChild("B", self), x ⇒ Child(Some(x._2)))
           .stimulate(_._1 ! GetChildren(self), x ⇒ Children(Set(x._2)))
@@ -668,10 +799,34 @@ abstract class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
         }
       })
     }
+
+    "not have problems stopping already stopped child" in {
+      sync(setup("ctx45", ignorePostStop = false) { (ctx, startWith) ⇒
+        val self = ctx.self
+        startWith.mkChild(Some("A"), ctx.spawnMessageAdapter(ChildEvent), self, inert = true) {
+          case (subj, child) ⇒
+            subj ! Kill(child, self)
+            (subj, child)
+        }.expectMessageKeep(expectTimeout) {
+          case (msg, (subj, child)) ⇒
+            msg should ===(Killed)
+            (subj, ctx.watch(child))
+        }.expectTermination(expectTimeout) {
+          case (t, (subj, child)) ⇒
+            t.ref should ===(child)
+            subj ! Kill(child, self)
+            child
+        }.expectMessage(expectTimeout) {
+          case (msg, _) ⇒
+            msg should ===(Killed)
+        }
+      })
+    }
+
   }
 }
 
-import ActorContextSpec._
+import akka.actor.typed.ActorContextSpec._
 
 class NormalActorContextSpec extends ActorContextSpec {
   override def suite = "normal"
@@ -681,7 +836,7 @@ class NormalActorContextSpec extends ActorContextSpec {
 
 class WidenedActorContextSpec extends ActorContextSpec {
 
-  import Actor._
+  import Behaviors._
 
   override def suite = "widened"
   override def behavior(ctx: scaladsl.ActorContext[Event], ignorePostStop: Boolean): Behavior[Command] =
@@ -691,18 +846,17 @@ class WidenedActorContextSpec extends ActorContextSpec {
 class DeferredActorContextSpec extends ActorContextSpec {
   override def suite = "deferred"
   override def behavior(ctx: scaladsl.ActorContext[Event], ignorePostStop: Boolean): Behavior[Command] =
-    Actor.deferred(_ ⇒ subject(ctx.self, ignorePostStop))
+    Behaviors.deferred(_ ⇒ subject(ctx.self, ignorePostStop))
 }
 
 class NestedDeferredActorContextSpec extends ActorContextSpec {
   override def suite = "nexted-deferred"
   override def behavior(ctx: scaladsl.ActorContext[Event], ignorePostStop: Boolean): Behavior[Command] =
-    Actor.deferred(_ ⇒ Actor.deferred(_ ⇒ subject(ctx.self, ignorePostStop)))
+    Behaviors.deferred(_ ⇒ Behaviors.deferred(_ ⇒ subject(ctx.self, ignorePostStop)))
 }
 
 class TapActorContextSpec extends ActorContextSpec {
   override def suite = "tap"
   override def behavior(ctx: scaladsl.ActorContext[Event], ignorePostStop: Boolean): Behavior[Command] =
-    Actor.tap((_, _) ⇒ (), (_, _) ⇒ (), subject(ctx.self, ignorePostStop))
+    Behaviors.tap((_, _) ⇒ (), (_, _) ⇒ (), subject(ctx.self, ignorePostStop))
 }
-

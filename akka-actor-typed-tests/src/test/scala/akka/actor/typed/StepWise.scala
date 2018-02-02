@@ -1,12 +1,12 @@
 /**
- * Copyright (C) 2014-2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.actor.typed
 
 import scala.concurrent.duration.FiniteDuration
 import java.util.concurrent.TimeoutException
 
-import akka.actor.typed.scaladsl.Actor._
+import akka.actor.typed.scaladsl.Behaviors._
 
 import scala.concurrent.duration.Deadline
 

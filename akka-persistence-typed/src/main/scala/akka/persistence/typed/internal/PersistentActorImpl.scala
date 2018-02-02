@@ -1,21 +1,15 @@
 /*
- * Copyright (C) 2017 Lightbend Inc. <https://www.lightbend.com>
+ * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.persistence.typed.internal
 
-import akka.{ actor ⇒ a }
-import akka.annotation.InternalApi
-import akka.event.Logging
-import akka.persistence.{ PersistentActor ⇒ UntypedPersistentActor }
-import akka.persistence.RecoveryCompleted
-import akka.persistence.SnapshotOffer
-import akka.actor.typed.Signal
+import akka.actor.ActorLogging
 import akka.actor.typed.internal.adapter.ActorContextAdapter
-import akka.persistence.typed.scaladsl.PersistentActor
-import akka.persistence.typed.scaladsl.PersistentBehavior
-import akka.actor.typed.scaladsl.ActorContext
-import akka.actor.typed.Terminated
-import akka.actor.typed.internal.adapter.ActorRefAdapter
+import akka.annotation.InternalApi
+import akka.persistence.journal.Tagged
+import akka.persistence.typed.scaladsl.{ PersistentBehavior, PersistentBehaviors }
+import akka.persistence.{ RecoveryCompleted, SaveSnapshotFailure, SaveSnapshotSuccess, SnapshotOffer, PersistentActor ⇒ UntypedPersistentActor }
+import akka.{ actor ⇒ a }
 
 /**
  * INTERNAL API
@@ -39,10 +33,9 @@ import akka.actor.typed.internal.adapter.ActorRefAdapter
  * The `PersistentActor` that runs a `PersistentBehavior`.
  */
 @InternalApi private[akka] class PersistentActorImpl[C, E, S](
-  behavior: PersistentBehavior[C, E, S]) extends UntypedPersistentActor {
+  behavior: PersistentBehavior[C, E, S]) extends UntypedPersistentActor with ActorLogging {
 
-  import PersistentActorImpl._
-  import PersistentActor._
+  import PersistentBehaviors._
 
   override val persistenceId: String = behavior.persistenceIdFromActorName(self.path.name)
 
@@ -69,35 +62,31 @@ import akka.actor.typed.internal.adapter.ActorRefAdapter
   def applyEvent(s: S, event: E): S =
     eventHandler.apply(s, event)
 
-  private val unhandledSignal: PartialFunction[(ActorContext[C], S, Signal), Effect[E, S]] = {
-    case sig ⇒ Effect.unhandled
-  }
-
   override def receiveCommand: Receive = {
     case PersistentActorImpl.StopForPassivation ⇒
       context.stop(self)
 
+    case SaveSnapshotSuccess(meta) ⇒
+      log.debug("Snapshot saved: {}", meta)
+    case SaveSnapshotFailure(meta, thr) ⇒
+      log.error(thr, "Snapshot failed: {}", meta)
+
     case msg ⇒
       try {
         val effects = msg match {
-          case a.Terminated(ref) ⇒
-            val sig = Terminated(ActorRefAdapter(ref))(null)
-            commandHandler.sigHandler(state).applyOrElse((ctx, state, sig), unhandledSignal)
           case a.ReceiveTimeout ⇒
-            commandHandler.commandHandler(ctx, state, ctxAdapter.receiveTimeoutMsg)
-          // TODO note that PostStop and PreRestart signals are not handled, we wouldn't be able to persist there
+            commandHandler(ctx, state, ctxAdapter.receiveTimeoutMsg)
+          // TODO note that PostStop, PreRestart and Terminated signals are not handled, we wouldn't be able to persist there
           case cmd: C @unchecked ⇒
             // FIXME we could make it more safe by using ClassTag for C
-            commandHandler.commandHandler(ctx, state, cmd)
+            commandHandler(ctx, state, cmd)
         }
-
         applyEffects(msg, effects)
       } catch {
-        case e: MatchError ⇒ throw new IllegalStateException(
+        case _: MatchError ⇒ throw new IllegalStateException(
           s"Undefined state [${state.getClass.getName}] or handler for [${msg.getClass.getName} " +
             s"in [${behavior.getClass.getName}] with persistenceId [$persistenceId]")
       }
-
   }
 
   private def applyEffects(msg: Any, effect: Effect[E, S], sideEffects: Seq[ChainableEffect[_, S]] = Nil): Unit = effect match {
@@ -110,8 +99,12 @@ import akka.actor.typed.internal.adapter.ActorRefAdapter
       // the invalid event, in case such validation is implemented in the event handler.
       // also, ensure that there is an event handler for each single event
       state = applyEvent(state, event)
-      persist(event) { _ ⇒
+      val tags = behavior.tagger(event)
+      val eventToPersist = if (tags.isEmpty) event else Tagged(event, tags)
+      persist(eventToPersist) { _ ⇒
         sideEffects.foreach(applySideEffect)
+        if (shouldSnapshot(state, event, lastSequenceNr))
+          saveSnapshot(state)
       }
     case PersistAll(events) ⇒
       if (events.nonEmpty) {
@@ -119,10 +112,24 @@ import akka.actor.typed.internal.adapter.ActorRefAdapter
         // the invalid event, in case such validation is implemented in the event handler.
         // also, ensure that there is an event handler for each single event
         var count = events.size
-        state = events.foldLeft(state)(applyEvent)
-        persistAll(events) { _ ⇒
+        var seqNr = lastSequenceNr
+        val (newState, shouldSnapshotAfterPersist) = events.foldLeft((state, false)) {
+          case ((currentState, snapshot), event) ⇒
+            seqNr += 1
+            (applyEvent(currentState, event), snapshot || shouldSnapshot(currentState, event, seqNr))
+        }
+        state = newState
+        val eventsToPersist = events.map { event ⇒
+          val tags = behavior.tagger(event)
+          if (tags.isEmpty) event else Tagged(event, tags)
+        }
+        persistAll(eventsToPersist) { _ ⇒
           count -= 1
-          if (count == 0) sideEffects.foreach(applySideEffect)
+          if (count == 0) {
+            sideEffects.foreach(applySideEffect)
+            if (shouldSnapshotAfterPersist)
+              saveSnapshot(state)
+          }
         }
       } else {
         // run side-effects even when no events are emitted
@@ -139,5 +146,10 @@ import akka.actor.typed.internal.adapter.ActorRefAdapter
     case _: Stop.type @unchecked ⇒ context.stop(self)
     case SideEffect(callbacks)   ⇒ callbacks.apply(state)
   }
+
+  private def shouldSnapshot(state: S, event: E, sequenceNr: Long): Boolean = {
+    behavior.snapshotOn(state, event, sequenceNr)
+  }
+
 }
 

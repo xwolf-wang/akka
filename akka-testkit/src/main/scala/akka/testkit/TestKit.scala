@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.testkit
 
@@ -660,6 +660,11 @@ trait TestKitBase {
     expectNoMsg_internal(max)
   }
 
+  /**
+   * Same as `expectNoMessage(remainingOrDefault)`, but correctly treating the timeFactor.
+   */
+  def expectNoMessage() { expectNoMsg_internal(remainingOrDefault) }
+
   private def expectNoMsg_internal(max: FiniteDuration) {
     val finish = System.nanoTime() + max.toNanos
     val pollInterval = 100.millis
@@ -679,10 +684,18 @@ trait TestKitBase {
         elem = queue.peekFirst()
       }
     }
-    val diff = (max.toNanos - left.toNanos).nanos
-    val m = s"received unexpected message $elem after ${diff.toMillis} millis"
-    assert(elem eq null, m)
-    lastWasNoMsg = true
+
+    if (elem ne null) {
+      // we pop the message, such that subsequent expectNoMessage calls can
+      // assert on the next period without a message
+      queue.pop()
+
+      val diff = (max.toNanos - left.toNanos).nanos
+      val m = s"assertion failed: received unexpected message $elem after ${diff.toMillis} millis"
+      throw new java.lang.AssertionError(m)
+    } else {
+      lastWasNoMsg = true
+    }
   }
 
   /**

@@ -1,15 +1,15 @@
 /**
- * Copyright (C) 2014-2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.testkit.typed
 
-import akka.actor.typed.scaladsl.Actor
-import akka.testkit.typed.Effect.{ Spawned, SpawnedAdapter, SpawnedAnonymous }
-import akka.testkit.typed.BehaviorTestkitSpec.{ Child, Father }
-import akka.testkit.typed.BehaviorTestkitSpec.Father._
+import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ Behavior, Props }
-import org.scalatest.{ FlatSpec, Matchers }
+import akka.testkit.typed.BehaviorTestkitSpec.Father._
+import akka.testkit.typed.BehaviorTestkitSpec.{ Child, Father }
+import akka.testkit.typed.Effect.{ Spawned, SpawnedAdapter, SpawnedAnonymous }
+import org.scalatest.{ Matchers, WordSpec }
 
 object BehaviorTestkitSpec {
   object Father {
@@ -27,38 +27,38 @@ object BehaviorTestkitSpec {
 
     def behavior: Behavior[Command] = init()
 
-    def init(): Behavior[Command] = Actor.immutable[Command] { (ctx, msg) ⇒
+    def init(): Behavior[Command] = Behaviors.immutable[Command] { (ctx, msg) ⇒
       msg match {
         case SpawnChildren(numberOfChildren) if numberOfChildren > 0 ⇒
           0.until(numberOfChildren).foreach { i ⇒
             ctx.spawn(Child.initial, s"child$i")
           }
-          Actor.same
+          Behaviors.same
         case SpawnChildrenWithProps(numberOfChildren, props) if numberOfChildren > 0 ⇒
           0.until(numberOfChildren).foreach { i ⇒
             ctx.spawn(Child.initial, s"child$i", props)
           }
-          Actor.same
+          Behaviors.same
         case SpawnAnonymous(numberOfChildren) if numberOfChildren > 0 ⇒
           0.until(numberOfChildren).foreach { _ ⇒
             ctx.spawnAnonymous(Child.initial)
           }
-          Actor.same
+          Behaviors.same
         case SpawnAnonymousWithProps(numberOfChildren, props) if numberOfChildren > 0 ⇒
           0.until(numberOfChildren).foreach { _ ⇒
             ctx.spawnAnonymous(Child.initial, props)
           }
-          Actor.same
+          Behaviors.same
         case SpawnAdapter ⇒
-          ctx.spawnAdapter {
+          ctx.spawnMessageAdapter {
             r: Reproduce ⇒ SpawnAnonymous(r.times)
           }
-          Actor.same
+          Behaviors.same
         case SpawnAdapterWithName(name) ⇒
-          ctx.spawnAdapter({
+          ctx.spawnMessageAdapter({
             r: Reproduce ⇒ SpawnAnonymous(r.times)
           }, name)
-          Actor.same
+          Behaviors.same
       }
     }
   }
@@ -67,10 +67,10 @@ object BehaviorTestkitSpec {
 
     sealed trait Action
 
-    val initial: Behavior[Action] = Actor.immutable[Action] { (_, msg) ⇒
+    val initial: Behavior[Action] = Behaviors.immutable[Action] { (_, msg) ⇒
       msg match {
         case _ ⇒
-          Actor.empty
+          Behaviors.empty
       }
     }
 
@@ -78,56 +78,56 @@ object BehaviorTestkitSpec {
 
 }
 
-//TODO WordSpec
-class BehaviorTestkitSpec extends FlatSpec with Matchers {
+class BehaviorTestkitSpec extends WordSpec with Matchers {
 
   private val props = Props.empty
 
-  "BehaviourTestkit's spawn" should "create children when no props specified" in {
-    val ctx = BehaviorTestkit[Father.Command](Father.init())
+  "BehaviorTestkit's spawn" must {
+    "create children when no props specified" in {
+      val testkit = BehaviorTestkit[Father.Command](Father.init())
+      testkit.run(SpawnChildren(2))
+      val effects = testkit.retrieveAllEffects()
+      effects should contain only (Spawned(Child.initial, "child0"), Spawned(Child.initial, "child1", Props.empty))
+    }
 
-    ctx.run(SpawnChildren(2))
-    val effects = ctx.retrieveAllEffects()
-    effects should contain only (Spawned(Child.initial, "child0"), Spawned(Child.initial, "child1", Props.empty))
+    "create children when props specified and record effects" in {
+      val testkit = BehaviorTestkit[Father.Command](Father.init())
+      testkit.run(SpawnChildrenWithProps(2, props))
+      val effects = testkit.retrieveAllEffects()
+      effects should contain only (Spawned(Child.initial, "child0", props), Spawned(Child.initial, "child1", props))
+    }
   }
 
-  it should "create children when props specified and record effects" in {
-    val ctx = BehaviorTestkit[Father.Command](Father.init())
+  "BehaviorTestkit's spawnAnonymous" must {
+    "create children when no props specified and record effects" in {
+      val testkit = BehaviorTestkit[Father.Command](Father.init())
+      testkit.run(SpawnAnonymous(2))
+      val effects = testkit.retrieveAllEffects()
+      effects shouldBe Seq(SpawnedAnonymous(Child.initial, Props.empty), SpawnedAnonymous(Child.initial, Props.empty))
+    }
 
-    ctx.run(SpawnChildrenWithProps(2, props))
-    val effects = ctx.retrieveAllEffects()
-    effects should contain only (Spawned(Child.initial, "child0", props), Spawned(Child.initial, "child1", props))
+    "create children when props specified and record effects" in {
+      val testkit = BehaviorTestkit[Father.Command](Father.init())
+
+      testkit.run(SpawnAnonymousWithProps(2, props))
+      val effects = testkit.retrieveAllEffects()
+      effects shouldBe Seq(SpawnedAnonymous(Child.initial, props), SpawnedAnonymous(Child.initial, props))
+    }
   }
 
-  "BehaviourTestkit's spawnAnonymous" should "create children when no props specified and record effects" in {
-    val ctx = BehaviorTestkit[Father.Command](Father.init())
+  "BehaviorTestkit's spawnMessageAdapter" must {
+    "create adapters without name and record effects" in {
+      val testkit = BehaviorTestkit[Father.Command](Father.init())
+      testkit.run(SpawnAdapter)
+      val effects = testkit.retrieveAllEffects()
+      effects shouldBe Seq(SpawnedAdapter)
+    }
 
-    ctx.run(SpawnAnonymous(2))
-    val effects = ctx.retrieveAllEffects()
-    effects shouldBe Seq(SpawnedAnonymous(Child.initial, Props.empty), SpawnedAnonymous(Child.initial, Props.empty))
-  }
-
-  it should "create children when props specified and record effects" in {
-    val ctx = BehaviorTestkit[Father.Command](Father.init())
-
-    ctx.run(SpawnAnonymousWithProps(2, props))
-    val effects = ctx.retrieveAllEffects()
-    effects shouldBe Seq(SpawnedAnonymous(Child.initial, props), SpawnedAnonymous(Child.initial, props))
-  }
-
-  "BehaviourTestkit's spawnAdapter" should "create adapters without name and record effects" in {
-    val ctx = BehaviorTestkit[Father.Command](Father.init())
-
-    ctx.run(SpawnAdapter)
-    val effects = ctx.retrieveAllEffects()
-    effects shouldBe Seq(SpawnedAdapter)
-  }
-
-  it should "create adapters with name and record effects" in {
-    val ctx = BehaviorTestkit[Father.Command](Father.init())
-
-    ctx.run(SpawnAdapterWithName("adapter"))
-    val effects = ctx.retrieveAllEffects()
-    effects shouldBe Seq(SpawnedAdapter)
+    "create adapters with name and record effects" in {
+      val testkit = BehaviorTestkit[Father.Command](Father.init())
+      testkit.run(SpawnAdapterWithName("adapter"))
+      val effects = testkit.retrieveAllEffects()
+      effects shouldBe Seq(SpawnedAdapter)
+    }
   }
 }

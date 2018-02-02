@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.actor.typed
 
@@ -19,7 +19,7 @@ import akka.util.OptionVal
  * its child actors.
  *
  * Behaviors can be formulated in a number of different ways, either by
- * using the DSLs in [[akka.actor.typed.scaladsl.Actor]] and [[akka.actor.typed.javadsl.Actor]]
+ * using the DSLs in [[akka.actor.typed.scaladsl.Behaviors]] and [[akka.actor.typed.javadsl.Behaviors]]
  * or extending the abstract [[ExtensibleBehavior]] class.
  *
  * Closing over ActorContext makes a Behavior immobile: it cannot be moved to
@@ -28,6 +28,8 @@ import akka.util.OptionVal
  *
  * This base class is not meant to be extended by user code. If you do so, you may
  * lose binary compatibility.
+ *
+ * Not for user extension.
  */
 @InternalApi
 @DoNotInherit
@@ -42,7 +44,7 @@ sealed abstract class Behavior[T] {
 
 /**
  * Extension point for implementing custom behaviors in addition to the existing
- * set of behaviors available through the DSLs in [[akka.actor.typed.scaladsl.Actor]] and [[akka.actor.typed.javadsl.Actor]]
+ * set of behaviors available through the DSLs in [[akka.actor.typed.scaladsl.Behaviors]] and [[akka.actor.typed.javadsl.Behaviors]]
  */
 abstract class ExtensibleBehavior[T] extends Behavior[T] {
   /**
@@ -222,6 +224,24 @@ object Behavior {
       case other                         ⇒ other
     }
 
+  /**
+   * INTERNAL API
+   *
+   * Return special behaviors as is, undefer deferred, if behavior is "non-special" apply the wrap function `f` to get
+   * and return the result from that. Useful for cases where a [[Behavior]] implementation that is decorating another
+   * behavior has processed a message and needs to re-wrap the resulting behavior with itself.
+   */
+  @InternalApi
+  @tailrec
+  private[akka] def wrap[T, U](currentBehavior: Behavior[_], nextBehavior: Behavior[T], ctx: ActorContext[T])(f: Behavior[T] ⇒ Behavior[U]): Behavior[U] =
+    nextBehavior match {
+      case SameBehavior | `currentBehavior` ⇒ same
+      case UnhandledBehavior                ⇒ unhandled
+      case StoppedBehavior                  ⇒ stopped
+      case deferred: DeferredBehavior[T]    ⇒ wrap(currentBehavior, undefer(deferred, ctx), ctx)(f)
+      case other                            ⇒ f(other)
+    }
+
   @tailrec
   def undefer[T](behavior: Behavior[T], ctx: ActorContext[T]): Behavior[T] = {
     behavior match {
@@ -294,5 +314,29 @@ object Behavior {
         }
         undefer(possiblyDeferredResult, ctx)
     }
+
+  /**
+   * INTERNAL API
+   *
+   * Execute the behavior with the given messages (or signals).
+   * The returned [[Behavior]] from each processed message is used for the next message.
+   */
+  @InternalApi private[akka] def interpretMessages[T](behavior: Behavior[T], ctx: ActorContext[T], messages: Iterator[T]): Behavior[T] = {
+    @tailrec def interpretOne(b: Behavior[T]): Behavior[T] = {
+      val b2 = Behavior.undefer(b, ctx)
+      if (!Behavior.isAlive(b2) || !messages.hasNext) b2
+      else {
+        val nextB = messages.next() match {
+          case sig: Signal ⇒
+            Behavior.interpretSignal(b2, ctx, sig)
+          case msg ⇒
+            Behavior.interpretMessage(b2, ctx, msg)
+        }
+        interpretOne(Behavior.canonicalize(nextB, b, ctx)) // recursive
+      }
+    }
+
+    interpretOne(Behavior.undefer(behavior, ctx))
+  }
 
 }

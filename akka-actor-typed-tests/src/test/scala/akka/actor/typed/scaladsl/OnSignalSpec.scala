@@ -1,32 +1,30 @@
 /**
- * Copyright (C) 2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.actor.typed
 package scaladsl
 
 import akka.Done
-import akka.testkit.typed.TestKitSettings
+import akka.testkit.typed.TestKit
 import akka.testkit.typed.scaladsl.TestProbe
 
-final class OnSignalSpec extends TypedSpec with StartSupport {
-
-  private implicit val testSettings = TestKitSettings(system)
+final class OnSignalSpec extends TestKit with TypedAkkaSpecWithShutdown {
 
   "An Actor.OnSignal behavior" must {
     "must correctly install the signal handler" in {
       val probe = TestProbe[Done]("probe")
       val behavior =
-        Actor.deferred[Nothing] { context ⇒
-          val stoppedChild = context.spawn(Actor.stopped, "stopped-child")
+        Behaviors.deferred[Nothing] { context ⇒
+          val stoppedChild = context.spawn(Behaviors.stopped, "stopped-child")
           context.watch(stoppedChild)
-          Actor.onSignal[Nothing] {
+          Behaviors.onSignal[Nothing] {
             case (_, Terminated(`stoppedChild`)) ⇒
               probe.ref ! Done
-              Actor.stopped
+              Behaviors.stopped
           }
         }
-      start[Nothing](behavior)
-      probe.expectMsg(Done)
+      spawn[Nothing](behavior)
+      probe.expectMessage(Done)
     }
   }
 }

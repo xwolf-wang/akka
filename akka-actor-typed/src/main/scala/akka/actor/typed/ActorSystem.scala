@@ -1,11 +1,11 @@
 /**
- * Copyright (C) 2014-2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.actor.typed
 
 import scala.concurrent.ExecutionContext
-import akka.{ actor ⇒ a, event ⇒ e }
-import java.util.concurrent.ThreadFactory
+import akka.{ actor ⇒ a }
+import java.util.concurrent.{ CompletionStage, ThreadFactory }
 
 import akka.actor.setup.ActorSystemSetup
 import com.typesafe.config.{ Config, ConfigFactory }
@@ -18,8 +18,8 @@ import akka.annotation.ApiMayChange
 import java.util.Optional
 
 import akka.actor.BootstrapSetup
+import akka.actor.typed.internal.adapter.GuardianActorAdapter
 import akka.actor.typed.receptionist.Receptionist
-import akka.event.typed.EventStream
 
 /**
  * An ActorSystem is home to a hierarchy of Actors. It is created using
@@ -27,6 +27,8 @@ import akka.event.typed.EventStream
  * Actor of this hierarchy and which will create all other Actors beneath it.
  * A system also implements the [[ActorRef]] type, and sending a message to
  * the system directs that message to the root Actor.
+ *
+ * Not for user extension.
  */
 @DoNotInherit
 @ApiMayChange
@@ -48,20 +50,12 @@ abstract class ActorSystem[-T] extends ActorRef[T] with Extensions {
   def logConfiguration(): Unit
 
   /**
-   * A reference to this system’s logFilter, which filters usage of the [[log]]
-   * [[akka.event.LoggingAdapter]] such that only permissible messages are sent
-   * via the [[eventStream]]. The default implementation will just test that
-   * the message is suitable for the current log level.
-   */
-  def logFilter: e.LoggingFilter
-
-  /**
-   * A [[akka.event.LoggingAdapter]] that can be used to emit log messages
+   * A [[akka.actor.typed.Logger]] that can be used to emit log messages
    * without specifying a more detailed source. Typically it is desirable to
-   * construct a dedicated LoggingAdapter within each Actor from that Actor’s
-   * [[ActorRef]] in order to identify the log messages.
+   * use the dedicated `Logger` available from each Actor’s [[ActorContext]]
+   * as that ties the log entries to the actor.
    */
-  def log: e.LoggingAdapter
+  def log: Logger
 
   /**
    * Start-up time in milliseconds since the epoch.
@@ -95,11 +89,6 @@ abstract class ActorSystem[-T] extends ActorRef[T] with Extensions {
   def scheduler: a.Scheduler
 
   /**
-   * Main event bus of this actor system, used for example for logging.
-   */
-  def eventStream: EventStream
-
-  /**
    * Facilities for lookup up thread-pools from configuration.
    */
   def dispatchers: Dispatchers
@@ -121,6 +110,12 @@ abstract class ActorSystem[-T] extends ActorRef[T] with Extensions {
    * and termination hooks have been executed.
    */
   def whenTerminated: Future[Terminated]
+
+  /**
+   * Returns a CompletionStage which will be completed after the ActorSystem has been terminated
+   * and termination hooks have been executed.
+   */
+  def getWhenTerminated: CompletionStage[Terminated]
 
   /**
    * The deadLetter address is a destination that will accept (and discard)
@@ -170,6 +165,14 @@ object ActorSystem {
     val appConfig = config.getOrElse(ConfigFactory.load(cl))
     createInternal(name, guardianBehavior, guardianProps, Some(appConfig), classLoader, executionContext)
   }
+  /**
+   * Scala API: Create an ActorSystem
+   */
+  def apply[T](
+    guardianBehavior: Behavior[T],
+    name:             String,
+    config:           Config
+  ): ActorSystem[T] = apply(guardianBehavior, name, config = Some(config))
 
   /**
    * Java API: Create an ActorSystem
@@ -192,6 +195,12 @@ object ActorSystem {
     apply(guardianBehavior, name)
 
   /**
+   * Java API: Create an ActorSystem
+   */
+  def create[T](guardianBehavior: Behavior[T], name: String, config: Config): ActorSystem[T] =
+    apply(guardianBehavior, name, config = Some(config))
+
+  /**
    * Create an ActorSystem based on the untyped [[akka.actor.ActorSystem]]
    * which runs Akka Typed [[Behavior]] on an emulation layer. In this
    * system typed and untyped actors can coexist.
@@ -203,15 +212,16 @@ object ActorSystem {
                                 executionContext: Option[ExecutionContext] = None): ActorSystem[T] = {
 
     Behavior.validateAsInitial(guardianBehavior)
+    require(Behavior.isAlive(guardianBehavior))
     val cl = classLoader.getOrElse(akka.actor.ActorSystem.findClassLoader())
     val appConfig = config.getOrElse(ConfigFactory.load(cl))
     val setup = ActorSystemSetup(BootstrapSetup(classLoader, config, executionContext))
     val untyped = new a.ActorSystemImpl(name, appConfig, cl, executionContext,
-      Some(PropsAdapter(() ⇒ guardianBehavior, guardianProps)), setup)
+      Some(PropsAdapter(() ⇒ guardianBehavior, guardianProps, isGuardian = true)), setup)
     untyped.start()
 
-    val adapter: ActorSystemAdapter.AdapterExtension = ActorSystemAdapter.AdapterExtension(untyped)
-    adapter.adapter
+    untyped.guardian ! GuardianActorAdapter.Start
+    ActorSystemAdapter.AdapterExtension(untyped).adapter
   }
 
   /**

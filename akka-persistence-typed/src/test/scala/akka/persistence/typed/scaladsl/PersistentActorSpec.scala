@@ -1,33 +1,61 @@
 /**
- * Copyright (C) 2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.persistence.typed.scaladsl
 
-import scala.concurrent.duration._
-import akka.actor.typed.{ ActorRef, ActorSystem, Behavior, StartSupport, SupervisorStrategy, Terminated, TypedSpec }
-import akka.actor.typed.scaladsl.Actor
-import akka.testkit.typed.TestKitSettings
+import akka.actor.typed.scaladsl.Behaviors
+import akka.actor.typed.{ ActorRef, ActorSystem, SupervisorStrategy, Terminated, TypedAkkaSpecWithShutdown }
+import akka.persistence.snapshot.SnapshotStore
+import akka.persistence.typed.scaladsl.PersistentBehaviors._
+import akka.persistence.{ SelectedSnapshot, SnapshotMetadata, SnapshotSelectionCriteria }
+import akka.testkit.typed.{ TestKit, TestKitSettings }
 import akka.testkit.typed.scaladsl._
 import com.typesafe.config.ConfigFactory
 import org.scalatest.concurrent.Eventually
-import akka.persistence.typed.scaladsl.PersistentActor._
+
+import scala.concurrent.Future
+import scala.concurrent.duration._
 
 object PersistentActorSpec {
 
+  class InMemorySnapshotStore extends SnapshotStore {
+    private var state = Map.empty[String, (Any, SnapshotMetadata)]
+
+    def loadAsync(persistenceId: String, criteria: SnapshotSelectionCriteria): Future[Option[SelectedSnapshot]] = {
+      log.debug("loadAsync: {} {}", persistenceId, criteria)
+      Future.successful(state.get(persistenceId).map(r ⇒ SelectedSnapshot(r._2, r._1)))
+    }
+
+    def saveAsync(metadata: SnapshotMetadata, snapshot: Any): Future[Unit] = {
+      log.debug("saveAsync: {} {}", metadata, snapshot)
+      state += (metadata.persistenceId -> (snapshot, metadata))
+      Future.successful(())
+    }
+
+    def deleteAsync(metadata: SnapshotMetadata) = ???
+    def deleteAsync(persistenceId: String, criteria: SnapshotSelectionCriteria) = ???
+  }
+
   val config = ConfigFactory.parseString(
-    """
+    s"""
+    akka.loglevel = INFO
+    akka.persistence.snapshot-store.inmem.class = "akka.persistence.typed.scaladsl.PersistentActorSpec$$InMemorySnapshotStore"
     akka.persistence.journal.plugin = "akka.persistence.journal.inmem"
+    akka.persistence.snapshot-store.plugin = "akka.persistence.snapshot-store.inmem"
     """)
 
   sealed trait Command
   final case object Increment extends Command
+  final case class IncrementWithPersistAll(nr: Int) extends Command
   final case object IncrementLater extends Command
   final case object IncrementAfterReceiveTimeout extends Command
   final case object IncrementTwiceAndThenLog extends Command
   final case object DoNothingAndThenLog extends Command
   final case object EmptyEventsListAndThenLog extends Command
   final case class GetValue(replyTo: ActorRef[State]) extends Command
+  final case object DelayFinished extends Command
   private case object Timeout extends Command
+  final case object LogThenStop extends Command
 
   sealed trait Event
   final case class Incremented(delta: Int) extends Event
@@ -39,37 +67,48 @@ object PersistentActorSpec {
   val firstLogging = "first logging"
   val secondLogging = "second logging"
 
-  def counter(persistenceId: String)(implicit actorSystem: ActorSystem[TypedSpec.Command], testSettings: TestKitSettings): Behavior[Command] =
-    counter(persistenceId, TestProbe[String].ref)
+  def counter(persistenceId: String)(implicit system: ActorSystem[_]): PersistentBehavior[Command, Event, State] =
+    counter(persistenceId, loggingActor = TestProbe[String].ref, probe = TestProbe[(State, Event)].ref)
 
-  def counter(persistenceId: String, loggingActor: ActorRef[String]): Behavior[Command] = {
+  def counter(persistenceId: String, logging: ActorRef[String])(implicit system: ActorSystem[_]): PersistentBehavior[Command, Event, State] =
+    counter(persistenceId, loggingActor = logging, probe = TestProbe[(State, Event)].ref)
 
-    PersistentActor.immutable[Command, Event, State](
+  def counterWithProbe(persistenceId: String, probe: ActorRef[(State, Event)])(implicit system: ActorSystem[_]): PersistentBehavior[Command, Event, State] =
+    counter(persistenceId, TestProbe[String].ref, probe)
+
+  def counter(
+    persistenceId: String,
+    loggingActor:  ActorRef[String],
+    probe:         ActorRef[(State, Event)]): PersistentBehavior[Command, Event, State] = {
+    PersistentBehaviors.immutable[Command, Event, State](
       persistenceId,
       initialState = State(0, Vector.empty),
-      commandHandler = CommandHandler[Command, Event, State]((ctx, state, cmd) ⇒ cmd match {
+      commandHandler = (ctx, state, cmd) ⇒ cmd match {
         case Increment ⇒
           Effect.persist(Incremented(1))
+        case IncrementWithPersistAll(n) ⇒
+          Effect.persist((0 until n).map(_ ⇒ Incremented(1)))
         case GetValue(replyTo) ⇒
           replyTo ! state
           Effect.none
         case IncrementLater ⇒
           // purpose is to test signals
-          val delay = ctx.spawnAnonymous(Actor.withTimers[Tick.type] { timers ⇒
+          val delay = ctx.spawnAnonymous(Behaviors.withTimers[Tick.type] { timers ⇒
             timers.startSingleTimer(Tick, Tick, 10.millis)
-            Actor.immutable((_, msg) ⇒ msg match {
-              case Tick ⇒ Actor.stopped
+            Behaviors.immutable((_, msg) ⇒ msg match {
+              case Tick ⇒ Behaviors.stopped
             })
           })
-          ctx.watch(delay)
+          ctx.watchWith(delay, DelayFinished)
           Effect.none
+        case DelayFinished ⇒
+          Effect.persist(Incremented(10))
         case IncrementAfterReceiveTimeout ⇒
           ctx.setReceiveTimeout(10.millis, Timeout)
           Effect.none
         case Timeout ⇒
           ctx.cancelReceiveTimeout()
           Effect.persist(Incremented(100))
-
         case IncrementTwiceAndThenLog ⇒
           Effect
             .persist(Incremented(1), Incremented(1))
@@ -93,20 +132,21 @@ object PersistentActorSpec {
             .andThen {
               loggingActor ! firstLogging
             }
-      })
-        .onSignal {
-          case (_, _, Terminated(_)) ⇒
-            Effect.persist(Incremented(10))
-        },
+        case LogThenStop ⇒
+          Effect.none.andThen {
+            loggingActor ! firstLogging
+          }.andThenStop
+      },
       eventHandler = (state, evt) ⇒ evt match {
         case Incremented(delta) ⇒
+          probe ! (state, evt)
           State(state.value + delta, state.history :+ state.value)
       })
   }
 
 }
 
-class PersistentActorSpec extends TypedSpec(PersistentActorSpec.config) with Eventually with StartSupport {
+class PersistentActorSpec extends TestKit(PersistentActorSpec.config) with Eventually with TypedAkkaSpecWithShutdown {
 
   import PersistentActorSpec._
 
@@ -115,46 +155,46 @@ class PersistentActorSpec extends TypedSpec(PersistentActorSpec.config) with Eve
   "A typed persistent actor" must {
 
     "persist an event" in {
-      val c = start(counter("c1"))
+      val c = spawn(counter("c1"))
 
       val probe = TestProbe[State]
       c ! Increment
       c ! GetValue(probe.ref)
-      probe.expectMsg(State(1, Vector(0)))
+      probe.expectMessage(State(1, Vector(0)))
     }
 
     "replay stored events" in {
-      val c = start(counter("c2"))
+      val c = spawn(counter("c2"))
 
       val probe = TestProbe[State]
       c ! Increment
       c ! Increment
       c ! Increment
       c ! GetValue(probe.ref)
-      probe.expectMsg(State(3, Vector(0, 1, 2)))
+      probe.expectMessage(State(3, Vector(0, 1, 2)))
 
-      val c2 = start(counter("c2"))
+      val c2 = spawn(counter("c2"))
       c2 ! GetValue(probe.ref)
-      probe.expectMsg(State(3, Vector(0, 1, 2)))
+      probe.expectMessage(State(3, Vector(0, 1, 2)))
       c2 ! Increment
       c2 ! GetValue(probe.ref)
-      probe.expectMsg(State(4, Vector(0, 1, 2, 3)))
+      probe.expectMessage(State(4, Vector(0, 1, 2, 3)))
     }
 
     "handle Terminated signal" in {
-      val c = start(counter("c3"))
+      val c = spawn(counter("c3"))
 
       val probe = TestProbe[State]
       c ! Increment
       c ! IncrementLater
       eventually {
         c ! GetValue(probe.ref)
-        probe.expectMsg(State(11, Vector(0, 1)))
+        probe.expectMessage(State(11, Vector(0, 1)))
       }
     }
 
     "handle receive timeout" in {
-      val c = start(counter("c4"))
+      val c = spawn(counter("c4"))
 
       val probe = TestProbe[State]
       c ! Increment
@@ -163,7 +203,7 @@ class PersistentActorSpec extends TypedSpec(PersistentActorSpec.config) with Eve
       Thread.sleep(500)
       eventually {
         c ! GetValue(probe.ref)
-        probe.expectMsg(State(101, Vector(0, 1)))
+        probe.expectMessage(State(101, Vector(0, 1)))
       }
     }
 
@@ -173,40 +213,40 @@ class PersistentActorSpec extends TypedSpec(PersistentActorSpec.config) with Eve
      */
     "chainable side effects with events" in {
       val loggingProbe = TestProbe[String]
-      val c = start(counter("c5", loggingProbe.ref))
+      val c = spawn(counter("c5", loggingProbe.ref))
 
       val probe = TestProbe[State]
 
       c ! IncrementTwiceAndThenLog
       c ! GetValue(probe.ref)
-      probe.expectMsg(State(2, Vector(0, 1)))
+      probe.expectMessage(State(2, Vector(0, 1)))
 
-      loggingProbe.expectMsg(firstLogging)
-      loggingProbe.expectMsg(secondLogging)
+      loggingProbe.expectMessage(firstLogging)
+      loggingProbe.expectMessage(secondLogging)
     }
 
     /** Proves that side-effects are called when emitting an empty list of events */
     "chainable side effects without events" in {
       val loggingProbe = TestProbe[String]
-      val c = start(counter("c6", loggingProbe.ref))
+      val c = spawn(counter("c6", loggingProbe.ref))
 
       val probe = TestProbe[State]
       c ! EmptyEventsListAndThenLog
       c ! GetValue(probe.ref)
-      probe.expectMsg(State(0, Vector.empty))
-      loggingProbe.expectMsg(firstLogging)
+      probe.expectMessage(State(0, Vector.empty))
+      loggingProbe.expectMessage(firstLogging)
     }
 
     /** Proves that side-effects are called when explicitly calling Effect.none */
     "chainable side effects when doing nothing (Effect.none)" in {
       val loggingProbe = TestProbe[String]
-      val c = start(counter("c7", loggingProbe.ref))
+      val c = spawn(counter("c7", loggingProbe.ref))
 
       val probe = TestProbe[State]
       c ! DoNothingAndThenLog
       c ! GetValue(probe.ref)
-      probe.expectMsg(State(0, Vector.empty))
-      loggingProbe.expectMsg(firstLogging)
+      probe.expectMessage(State(0, Vector.empty))
+      loggingProbe.expectMessage(firstLogging)
     }
 
     "work when wrapped in other behavior" in {
@@ -215,12 +255,125 @@ class PersistentActorSpec extends TypedSpec(PersistentActorSpec.config) with Eve
       // wrap it in Actor.deferred or Actor.supervise
       pending
       val probe = TestProbe[State]
-      val behavior = Actor.supervise[Command](counter("c13"))
+      val behavior = Behaviors.supervise[Command](counter("c13"))
         .onFailure(SupervisorStrategy.restartWithBackoff(1.second, 10.seconds, 0.1))
-      val c = start(behavior)
+      val c = spawn(behavior)
       c ! Increment
       c ! GetValue(probe.ref)
-      probe.expectMsg(State(1, Vector(0)))
+      probe.expectMessage(State(1, Vector(0)))
+    }
+
+    "stop after persisting" in {
+      val loggingProbe = TestProbe[String]
+      val c: ActorRef[Command] = spawn(counter("c8", loggingProbe.ref))
+      val watchProbe = watcher(c)
+      c ! LogThenStop
+      loggingProbe.expectMessage(firstLogging)
+      watchProbe.expectMessage("Terminated")
+    }
+
+    "snapshot via predicate" in {
+      val alwaysSnapshot = counter("c9").snapshotOn { (_, _, _) ⇒ true }
+      val c = spawn(alwaysSnapshot)
+      val watchProbe = watcher(c)
+      val replyProbe = TestProbe[State]()
+
+      c ! Increment
+      c ! GetValue(replyProbe.ref)
+      replyProbe.expectMessage(State(1, Vector(0)))
+      c ! LogThenStop
+      watchProbe.expectMessage("Terminated")
+
+      val probe = TestProbe[(State, Event)]()
+      val c2 = spawn(counterWithProbe("c9", probe.ref))
+      // state should be rebuilt from snapshot, no events replayed
+      probe.expectNoMessage()
+      c2 ! Increment
+      c2 ! GetValue(replyProbe.ref)
+      replyProbe.expectMessage(State(2, Vector(0, 1)))
+    }
+
+    "check all events for snapshot in PersistAll" in {
+      val snapshotAtTwo = counter("c11").snapshotOn { (s, e, _) ⇒
+        s.value == 2
+      }
+      val c: ActorRef[Command] = spawn(snapshotAtTwo)
+      val watchProbe = watcher(c)
+      val replyProbe = TestProbe[State]()
+
+      c ! IncrementWithPersistAll(3)
+      c ! GetValue(replyProbe.ref)
+      replyProbe.expectMessage(State(3, Vector(0, 1, 2)))
+      c ! LogThenStop
+      watchProbe.expectMessage("Terminated")
+
+      val probeC2 = TestProbe[(State, Event)]()
+      val c2 = spawn(counterWithProbe("c11", probeC2.ref))
+      // middle event triggered all to be snapshot
+      probeC2.expectNoMessage()
+      c2 ! GetValue(replyProbe.ref)
+      replyProbe.expectMessage(State(3, Vector(0, 1, 2)))
+    }
+
+    "snapshot every N sequence nrs" in {
+      val c = spawn(counter("c10").snapshotEvery(2))
+      val watchProbe = watcher(c)
+      val replyProbe = TestProbe[State]()
+
+      c ! Increment
+      c ! GetValue(replyProbe.ref)
+      replyProbe.expectMessage(State(1, Vector(0)))
+      c ! LogThenStop
+      watchProbe.expectMessage("Terminated")
+
+      // no shapshot should have happened
+      val probeC2 = TestProbe[(State, Event)]()
+      val c2 = spawn(counterWithProbe("c10", probeC2.ref).snapshotEvery(2))
+      probeC2.expectMessage[(State, Event)]((State(0, Vector()), Incremented(1)))
+      val watchProbeC2 = watcher(c2)
+      c2 ! Increment
+      c2 ! LogThenStop
+      watchProbeC2.expectMessage("Terminated")
+
+      val probeC3 = TestProbe[(State, Event)]()
+      val c3 = spawn(counterWithProbe("c10", probeC3.ref).snapshotEvery(2))
+      // this time it should have been snapshotted so no events to replay
+      probeC3.expectNoMessage()
+      c3 ! GetValue(replyProbe.ref)
+      replyProbe.expectMessage(State(2, Vector(0, 1)))
+    }
+
+    "snapshot every N sequence nrs when persisting multiple events" in {
+      val c = spawn(counter("c12").snapshotEvery(2))
+      val watchProbe = watcher(c)
+      val replyProbe = TestProbe[State]()
+
+      c ! IncrementWithPersistAll(3)
+      c ! GetValue(replyProbe.ref)
+      replyProbe.expectMessage(State(3, Vector(0, 1, 2)))
+      c ! LogThenStop
+      watchProbe.expectMessage("Terminated")
+
+      val probeC2 = TestProbe[(State, Event)]()
+      val c2 = spawn(counterWithProbe("c12", probeC2.ref).snapshotEvery(2))
+      probeC2.expectNoMessage()
+      c2 ! GetValue(replyProbe.ref)
+      replyProbe.expectMessage(State(3, Vector(0, 1, 2)))
+    }
+
+    def watcher(toWatch: ActorRef[_]): TestProbe[String] = {
+      val probe = TestProbe[String]()
+      val w = Behaviors.deferred[Any] { (ctx) ⇒
+        ctx.watch(toWatch)
+        Behaviors.immutable[Any] { (_, _) ⇒ Behaviors.same }
+          .onSignal {
+            case (_, s: Terminated) ⇒
+              probe.ref ! "Terminated"
+              Behaviors.stopped
+          }
+      }
+      spawn(w)
+      probe
     }
   }
 

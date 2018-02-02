@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.actor.typed
 
@@ -43,7 +43,7 @@ object InstanceCountingExtension extends ExtensionId[DummyExtension1] {
   }
 }
 
-class ExtensionsSpec extends TypedSpecSetup {
+class ExtensionsSpec extends TypedAkkaSpec {
 
   "The extensions subsystem" must {
     "return the same instance for the same id" in
@@ -151,17 +151,32 @@ class ExtensionsSpec extends TypedSpecSetup {
         instance1 should be theSameInstanceAs instance2
       }
 
+    "load registered typed extensions eagerly even for untyped system" in {
+      import akka.actor.typed.scaladsl.adapter._
+      val beforeCreation = InstanceCountingExtension.createCount.get()
+      val untypedSystem = akka.actor.ActorSystem()
+      try {
+        val before = InstanceCountingExtension.createCount.get()
+        InstanceCountingExtension(untypedSystem.toTyped)
+        val after = InstanceCountingExtension.createCount.get()
+
+        // should have been loaded even before it was accessed in the test because InstanceCountingExtension is listed
+        // as a typed library-extension in the config
+        before shouldEqual beforeCreation + 1
+        after shouldEqual before
+      } finally {
+        untypedSystem.terminate().futureValue
+      }
+    }
+
     "not create an extension multiple times when using the ActorSystemAdapter" in {
       import akka.actor.typed.scaladsl.adapter._
       val untypedSystem = akka.actor.ActorSystem()
       try {
+        val ext1 = DummyExtension1(untypedSystem.toTyped)
+        val ext2 = DummyExtension1(untypedSystem.toTyped)
 
-        val before = InstanceCountingExtension.createCount.get()
-        InstanceCountingExtension(untypedSystem.toTyped)
-        val ext = InstanceCountingExtension(untypedSystem.toTyped)
-        val after = InstanceCountingExtension.createCount.get()
-
-        (after - before) should ===(1)
+        ext1 should be theSameInstanceAs ext2
 
       } finally {
         untypedSystem.terminate().futureValue

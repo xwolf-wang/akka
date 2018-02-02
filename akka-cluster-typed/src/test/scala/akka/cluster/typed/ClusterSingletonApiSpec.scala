@@ -1,19 +1,18 @@
 /**
- * Copyright (C) 2009-2017 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 package akka.cluster.typed
 
 import java.nio.charset.StandardCharsets
 
 import akka.actor.ExtendedActorSystem
-import akka.serialization.SerializerWithStringManifest
-import akka.actor.typed.scaladsl.Actor
+import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter._
-import akka.testkit.typed.TestKitSettings
+import akka.testkit.typed.{ TestKit, TestKitSettings }
 import akka.testkit.typed.scaladsl.TestProbe
-import akka.actor.typed.{ ActorRef, ActorRefResolver, Props, TypedSpec }
+import akka.actor.typed.{ ActorRef, ActorRefResolver, Props, TypedAkkaSpecWithShutdown }
+import akka.serialization.SerializerWithStringManifest
 import com.typesafe.config.ConfigFactory
-import org.scalatest.concurrent.ScalaFutures
 
 import scala.concurrent.Await
 import scala.concurrent.duration._
@@ -49,15 +48,15 @@ object ClusterSingletonApiSpec {
 
   case object Perish extends PingProtocol
 
-  val pingPong = Actor.immutable[PingProtocol] { (ctx, msg) ⇒
+  val pingPong = Behaviors.immutable[PingProtocol] { (_, msg) ⇒
 
     msg match {
       case Ping(respondTo) ⇒
         respondTo ! Pong
-        Actor.same
+        Behaviors.same
 
       case Perish ⇒
-        Actor.stopped
+        Behaviors.stopped
     }
 
   }
@@ -84,7 +83,7 @@ object ClusterSingletonApiSpec {
   }
 }
 
-class ClusterSingletonApiSpec extends TypedSpec(ClusterSingletonApiSpec.config) with ScalaFutures {
+class ClusterSingletonApiSpec extends TestKit("ClusterSingletonApiSpec", ClusterSingletonApiSpec.config) with TypedAkkaSpecWithShutdown {
   import ClusterSingletonApiSpec._
 
   implicit val testSettings = TestKitSettings(system)
@@ -103,17 +102,17 @@ class ClusterSingletonApiSpec extends TypedSpec(ClusterSingletonApiSpec.config) 
   "A typed cluster singleton" must {
 
     "be accessible from two nodes in a cluster" in {
-      val node1UpProbe = TestProbe[SelfUp]()(system, implicitly[TestKitSettings])
+      val node1UpProbe = TestProbe[SelfUp]()(system)
       clusterNode1.subscriptions ! Subscribe(node1UpProbe.ref, classOf[SelfUp])
 
-      val node2UpProbe = TestProbe[SelfUp]()(adaptedSystem2, implicitly[TestKitSettings])
+      val node2UpProbe = TestProbe[SelfUp]()(adaptedSystem2)
       clusterNode1.subscriptions ! Subscribe(node2UpProbe.ref, classOf[SelfUp])
 
       clusterNode1.manager ! Join(clusterNode1.selfMember.address)
       clusterNode2.manager ! Join(clusterNode1.selfMember.address)
 
-      node1UpProbe.expectMsgType[SelfUp]
-      node2UpProbe.expectMsgType[SelfUp]
+      node1UpProbe.expectMessageType[SelfUp]
+      node2UpProbe.expectMessageType[SelfUp]
 
       val cs1: ClusterSingleton = ClusterSingleton(system)
       val cs2 = ClusterSingleton(adaptedSystem2)
@@ -126,17 +125,17 @@ class ClusterSingletonApiSpec extends TypedSpec(ClusterSingletonApiSpec.config) 
       cs1.spawn(pingPong, "ping-pong", Props.empty, settings, Perish) should ===(node1ref)
       cs2.spawn(pingPong, "ping-pong", Props.empty, settings, Perish) should ===(node2ref)
 
-      val node1PongProbe = TestProbe[Pong.type]()(system, implicitly[TestKitSettings])
-      val node2PongProbe = TestProbe[Pong.type]()(adaptedSystem2, implicitly[TestKitSettings])
+      val node1PongProbe = TestProbe[Pong.type]()(system)
+      val node2PongProbe = TestProbe[Pong.type]()(adaptedSystem2)
 
       node1PongProbe.awaitAssert({
         node1ref ! Ping(node1PongProbe.ref)
-        node1PongProbe.expectMsg(Pong)
+        node1PongProbe.expectMessage(Pong)
       }, 3.seconds)
 
       node2PongProbe.awaitAssert({
         node2ref ! Ping(node2PongProbe.ref)
-        node2PongProbe.expectMsg(Pong)
+        node2PongProbe.expectMessage(Pong)
       }, 3.seconds)
 
     }
