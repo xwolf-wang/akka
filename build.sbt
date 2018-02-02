@@ -336,7 +336,7 @@ lazy val stream = akkaModule("akka-stream")
   .settings(Dependencies.stream)
   .settings(AutomaticModuleName.settings("akka.stream"))
   .settings(OSGi.stream)
-  .settings(Protobuf.settings)
+  // .settings(Protobuf.settings) FIXME
   .enablePlugins(BoilerplatePlugin)
 
 lazy val streamTestkit = akkaModule("akka-stream-testkit")
