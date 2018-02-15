@@ -233,7 +233,7 @@ class TcpConnectionSpec extends AkkaSpec("""
       }
     }
 
-    "write file to network" in pendingUntilFixed(new EstablishedConnectionTest() { // FIXME #23902
+    "write file to network" in new EstablishedConnectionTest() {
       run {
         val fs = Jimfs.newFileSystem("write-file-in-network", Configuration.unix())
         val tmpFile = Files.createTempFile(fs.getPath("/"), "whatever", ".dat")
@@ -255,7 +255,7 @@ class TcpConnectionSpec extends AkkaSpec("""
           fs.close()
         }
       }
-    })
+    }
 
     "write a CompoundWrite to the network and produce correct ACKs" in new EstablishedConnectionTest() {
       run {
