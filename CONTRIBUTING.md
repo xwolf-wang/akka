@@ -245,7 +245,13 @@ The generated html documentation is in `akka-docs/target/paradox/site/main/index
 
 ### Scaladoc
 
-Akka generates class diagrams for the API documentation using ScalaDoc. This needs the `dot` command from the Graphviz software package to be installed to avoid errors. You can disable the diagram generation by adding the flag `-Dakka.scaladoc.diagrams=false`. After installing Graphviz, make sure you add the toolset to the PATH (definitely on Windows).
+Akka generates class diagrams for the API documentation using ScalaDoc. 
+
+Links to methods in ScalaDoc comments should be formatted
+`[[Like#this]]`, because `[[this]]` does not work with genjavadoc, and
+IntelliJ warns about `[[#this]]`.
+
+The Scaladoc tool needs the `dot` command from the Graphviz software package to be installed to avoid errors. You can disable the diagram generation by adding the flag `-Dakka.scaladoc.diagrams=false`. After installing Graphviz, make sure you add the toolset to the PATH (definitely on Windows).
 
 ### JavaDoc
 
@@ -333,6 +339,9 @@ the validator to test all projects.
 Note, that `OK TO TEST` will only be picked up when the user asking for it is considered an admin. Public (!) members of the [akka organization](https://github.com/orgs/akka/people) are automatically considered admins and users manually declared admin in the Jenkins job (currently no one is explicitly listed). `PLS BUILD` and `PLS BUILD ALL` can be issued by everyone that is an admin or everyone who was whitelisted in the Jenkins Job (whitelisting != declaring someone an admin).
 
 ## Source style
+
+Sometimes it is convenient to place 'internal' classes in their own package.
+In such situations we prefer 'internal' over 'impl' as a package name.
 
 ### Scala style 
 

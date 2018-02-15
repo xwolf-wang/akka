@@ -183,7 +183,6 @@ class PersistentActorSpec extends TestKit(PersistentActorSpec.config) with Event
 
     "handle Terminated signal" in {
       val c = spawn(counter("c3"))
-
       val probe = TestProbe[State]
       c ! Increment
       c ! IncrementLater
@@ -363,7 +362,7 @@ class PersistentActorSpec extends TestKit(PersistentActorSpec.config) with Event
 
     def watcher(toWatch: ActorRef[_]): TestProbe[String] = {
       val probe = TestProbe[String]()
-      val w = Behaviors.deferred[Any] { (ctx) ⇒
+      val w = Behaviors.setup[Any] { (ctx) ⇒
         ctx.watch(toWatch)
         Behaviors.immutable[Any] { (_, _) ⇒ Behaviors.same }
           .onSignal {
@@ -376,5 +375,4 @@ class PersistentActorSpec extends TestKit(PersistentActorSpec.config) with Event
       probe
     }
   }
-
 }

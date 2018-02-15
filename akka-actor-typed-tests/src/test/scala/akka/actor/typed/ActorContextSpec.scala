@@ -303,8 +303,10 @@ object ActorContextSpec {
       case (ctx, t @ Terminated(test)) ⇒
         outstanding get test match {
           case Some(reply) ⇒
-            if (t.failure eq null) reply ! Success
-            else reply ! Failed(t.failure)
+            t.failure match {
+              case None     ⇒ reply ! Success
+              case Some(ex) ⇒ reply ! Failed(ex)
+            }
             guardian(outstanding - test)
           case None ⇒ same
         }
@@ -846,13 +848,13 @@ class WidenedActorContextSpec extends ActorContextSpec {
 class DeferredActorContextSpec extends ActorContextSpec {
   override def suite = "deferred"
   override def behavior(ctx: scaladsl.ActorContext[Event], ignorePostStop: Boolean): Behavior[Command] =
-    Behaviors.deferred(_ ⇒ subject(ctx.self, ignorePostStop))
+    Behaviors.setup(_ ⇒ subject(ctx.self, ignorePostStop))
 }
 
 class NestedDeferredActorContextSpec extends ActorContextSpec {
   override def suite = "nexted-deferred"
   override def behavior(ctx: scaladsl.ActorContext[Event], ignorePostStop: Boolean): Behavior[Command] =
-    Behaviors.deferred(_ ⇒ Behaviors.deferred(_ ⇒ subject(ctx.self, ignorePostStop)))
+    Behaviors.setup(_ ⇒ Behaviors.setup(_ ⇒ subject(ctx.self, ignorePostStop)))
 }
 
 class TapActorContextSpec extends ActorContextSpec {
