@@ -25,3 +25,6 @@ addSbtPlugin("net.virtual-void" % "sbt-dependency-graph" % "0.9.0") // for advan
 
 // // JDK9 features support via Multi-Release JARs
 // addSbtPlugin("com.lightbend.sbt" % "sbt-multi-release-jar" % "0.1.0") // we don't actually use it so far
+
+// used for @unidoc directive
+libraryDependencies += "io.github.lukehutch" % "fast-classpath-scanner" % "2.12.3"

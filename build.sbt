@@ -1,4 +1,4 @@
-import akka.AutomaticModuleName
+import akka.{ParadoxSupport, AutomaticModuleName}
 
 enablePlugins(akka.TimeStampede, akka.NoPublish)  // FIXME akka.UnidocRoot, akka.UnidocWithPrValidation
 disablePlugins(MimaPlugin)
@@ -236,7 +236,8 @@ lazy val docs = akkaModule("akka-docs")
     deployRsyncArtifact := List((paradox in Compile).value -> s"www/docs/akka/${version.value}"),
     javaOptions in Test ++= { if (isJDK9) Seq("--add-modules", "java.xml.bind") else Seq() },
   )
-  .enablePlugins(AkkaParadoxPlugin, DeployRsync, NoPublish, ParadoxBrowse) // FIXME ScaladocNoVerificationOfDiagrams)
+  .enablePlugins(AkkaParadoxPlugin, DeployRsync, NoPublish, ParadoxBrowse) // FIXME , ScaladocNoVerificationOfDiagrams)
+  .settings(ParadoxSupport.paradoxWithCustomDirectives)
   .disablePlugins(MimaPlugin, WhiteSourcePlugin)
 
 lazy val multiNodeTestkit = akkaModule("akka-multi-node-testkit")
@@ -446,6 +447,7 @@ lazy val streamTyped = akkaModule("akka-stream-typed")
 lazy val typedTestkit = akkaModule("akka-testkit-typed")
   .dependsOn(actorTyped, testkit % "compile->compile;test->test")
   .settings(AutomaticModuleName.settings("akka.testkit.typed"))
+  .settings(Dependencies.typedTestkit)
   .disablePlugins(MimaPlugin)
 
 lazy val actorTypedTests = akkaModule("akka-actor-typed-tests")

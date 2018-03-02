@@ -4,7 +4,7 @@
 package akka.util
 
 import akka.testkit.AkkaSpec
-import LineNumbers._
+import akka.util.LineNumbers._
 
 import scala.util.Properties
 
@@ -18,26 +18,29 @@ class LineNumberSpec extends AkkaSpec {
       import LineNumberSpecCodeForScala._
 
       "work for small functions" in {
-        val result = LineNumbers(oneline)
-
-        if (isScala212)
-          // because how scala 2.12 does the same as Java Lambdas
-          result should ===(NoSourceInfo)
-        else
-          result should ===(SourceFileLines("LineNumberSpecCodeForScala.scala", 12, 12))
+        LineNumbers(oneline) should ===(SourceFileLines("LineNumberSpecCodeForScala.scala", 12, 12))
       }
 
       "work for larger functions" in {
         val result = LineNumbers(twoline)
         if (isScala212)
           // because how scala 2.12 does the same as Java Lambdas
-          result should ===(NoSourceInfo)
+          result should ===(SourceFileLines("LineNumberSpecCodeForScala.scala", 14, 14))
         else
           result should ===(SourceFileLines("LineNumberSpecCodeForScala.scala", 14, 16))
       }
 
       "work for partial functions" in {
         LineNumbers(partial) should ===(SourceFileLines("LineNumberSpecCodeForScala.scala", 19, 21))
+      }
+
+      "work for `def`" in {
+        val result = LineNumbers(method("foo"))
+        if (isScala212)
+          // because how scala 2.12 does the same as Java Lambdas
+          result should ===(SourceFileLines("LineNumberSpecCodeForScala.scala", 25, 26))
+        else
+          result should ===(SourceFileLines("LineNumberSpecCodeForScala.scala", 24, 26))
       }
 
     }
@@ -47,12 +50,12 @@ class LineNumberSpec extends AkkaSpec {
 
       "work for small functions" in {
         // because how java Lambdas are implemented/designed
-        LineNumbers(l.f1()) should ===(NoSourceInfo)
+        LineNumbers(l.f1()) should ===(SourceFileLines("LineNumberSpecCodeForJava.java", 19, 19))
       }
 
       "work for larger functions" in {
         // because how java Lambdas are implemented/designed
-        LineNumbers(l.f2()) should ===(NoSourceInfo)
+        LineNumbers(l.f2()) should ===(SourceFileLines("LineNumberSpecCodeForJava.java", 24, 25))
       }
 
       "work for anonymous classes" in {
