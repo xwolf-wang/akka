@@ -1,6 +1,7 @@
 /**
  * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.sharding
 
 import java.io.File
@@ -209,4 +210,4 @@ class RemoveInternalClusterShardingDataSpec extends AkkaSpec(RemoveInternalClust
     }
   }
 }
-*/ 
+*/

@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.persistence.journal.leveldb
 
 import akka.persistence.journal.JournalSpec
@@ -19,4 +23,4 @@ class LeveldbJournalNoAtomicPersistMultipleEventsSpec extends JournalSpec(
   override def supportsRejectingNonSerializableObjects = true
 
 }
-*/ 
+*/

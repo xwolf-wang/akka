@@ -1,6 +1,7 @@
 /**
- *  Copyright (C) 2015-2018 Lightbend Inc. <http://www.lightbend.com/>
+ *  Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package jdocs.stream.javadsl.cookbook;
 
 import akka.Done;
@@ -144,8 +145,8 @@ public class RecipeAdhocSourceTest extends RecipeTest {
         Promise<Done> shutdown = Futures.promise();
         AtomicInteger startedCount = new AtomicInteger(0);
 
-        Source<String, ?> source = Source
-          .empty().mapMaterializedValue(x -> startedCount.incrementAndGet())
+        Source<String, ?> source = Source.<String>empty()
+          .mapMaterializedValue(x -> startedCount.incrementAndGet())
           .concat(Source.repeat("a"));
 
         TestSubscriber.Probe<String> probe =
@@ -171,8 +172,8 @@ public class RecipeAdhocSourceTest extends RecipeTest {
         Promise<Done> shutdown = Futures.promise();
         AtomicInteger startedCount = new AtomicInteger(0);
 
-        Source<String, ?> source = Source
-          .empty().mapMaterializedValue(x -> startedCount.incrementAndGet())
+        Source<String, ?> source = Source.<String>empty()
+          .mapMaterializedValue(x -> startedCount.incrementAndGet())
           .concat(Source.repeat("a"));
 
         TestSubscriber.Probe<String> probe =

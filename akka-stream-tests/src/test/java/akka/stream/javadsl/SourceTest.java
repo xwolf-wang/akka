@@ -1,6 +1,7 @@
 /**
  * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.javadsl;
 
 import akka.Done;
@@ -45,6 +46,20 @@ public class SourceTest extends StreamTest {
   @ClassRule
   public static AkkaJUnitActorSystemResource actorSystemResource = new AkkaJUnitActorSystemResource("SourceTest",
     AkkaSpec.testConf());
+
+
+  interface Fruit {}
+  static class Apple implements Fruit {};
+  static class Orange implements Fruit {};
+
+  public void compileOnlyUpcast() {
+    Source<Apple, NotUsed> apples = null;
+    Source<Orange, NotUsed> oranges = null;
+    Source<Fruit, NotUsed> appleFruits = Source.upcast(apples);
+    Source<Fruit, NotUsed> orangeFruits = Source.upcast(oranges);
+
+    Source<Fruit, NotUsed> fruits = appleFruits.merge(orangeFruits);
+  }
 
   @Test
   public void mustBeAbleToUseSimpleOperators() {
@@ -430,7 +445,13 @@ public class SourceTest extends StreamTest {
     probe.expectNoMsg(FiniteDuration.create(200, TimeUnit.MILLISECONDS));
     probe.expectMsgEquals("tick");
     probe.expectNoMsg(FiniteDuration.create(200, TimeUnit.MILLISECONDS));
+  }
 
+  @Test
+  @SuppressWarnings("unused")
+  public void mustCompileMethodsWithJavaDuration() {
+    Source<NotUsed, Cancellable> tickSource = Source.tick(java.time.Duration.ofSeconds(1),
+            java.time.Duration.ofMillis(500), NotUsed.getInstance());
   }
 
   @Test
@@ -842,14 +863,10 @@ public class SourceTest extends StreamTest {
   @Test
   public void mustBeAbleToUseIdleInject() throws Exception {
     Integer result =
-        Source.maybe()
-            .keepAlive(Duration.create(1, "second"), new Creator<Integer>() {
-              public Integer create() {
-                return 0;
-              }
-            })
+        Source.<Integer>maybe()
+            .keepAlive(Duration.create(1, "second"), () -> 0)
             .takeWithin(Duration.create(1500, "milliseconds"))
-            .runWith(Sink.<Integer>head(), materializer)
+            .runWith(Sink.head(), materializer)
             .toCompletableFuture().get(3, TimeUnit.SECONDS);
 
     assertEquals((Object) 0, result);

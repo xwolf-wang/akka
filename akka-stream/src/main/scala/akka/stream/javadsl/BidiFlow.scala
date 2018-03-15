@@ -1,6 +1,7 @@
 /**
  * Copyright (C) 2015-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.javadsl
 
 import akka.NotUsed
@@ -95,7 +96,7 @@ object BidiFlow {
     new BidiFlow(scaladsl.BidiFlow.bidirectionalIdleTimeout(timeout))
 }
 
-final class BidiFlow[-I1, +O1, -I2, +O2, +Mat](delegate: scaladsl.BidiFlow[I1, O1, I2, O2, Mat]) extends Graph[BidiShape[I1, O1, I2, O2], Mat] {
+final class BidiFlow[I1, O1, I2, O2, Mat](delegate: scaladsl.BidiFlow[I1, O1, I2, O2, Mat]) extends Graph[BidiShape[I1, O1, I2, O2], Mat] {
   override def traversalBuilder = delegate.traversalBuilder
   override def shape = delegate.shape
 
