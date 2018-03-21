@@ -4,15 +4,13 @@
 
 package akka.actor.typed.scaladsl
 
-import akka.actor.typed.{ LogMarker, TestException, TypedAkkaSpec, scaladsl }
+import akka.actor.typed.{ LogMarker, TestException, TypedAkkaSpec }
 import akka.testkit.EventFilter
 import com.typesafe.config.ConfigFactory
 import akka.actor.typed.scaladsl.adapter._
 import akka.event.Logging
 import akka.event.Logging.{ LogEventWithCause, LogEventWithMarker }
 import akka.testkit.typed.scaladsl.ActorTestKit
-
-import scala.util.control.NoStackTrace
 
 class ActorLoggingSpec extends ActorTestKit with TypedAkkaSpec {
 
@@ -34,7 +32,7 @@ class ActorLoggingSpec extends ActorTestKit with TypedAkkaSpec {
         spawn(Behaviors.setup[String] { ctx ⇒
           ctx.log.info("Started")
 
-          Behaviors.immutable { (ctx, msg) ⇒
+          Behaviors.receive { (ctx, msg) ⇒
             ctx.log.info("got message {}", msg)
             Behaviors.same
           }
@@ -204,7 +202,7 @@ class ActorLoggingSpec extends ActorTestKit with TypedAkkaSpec {
         },
         Behaviors.setup { ctx ⇒
           ctx.log.info("Starting")
-          Behaviors.immutable { (ctx, msg) ⇒
+          Behaviors.receive { (ctx, msg) ⇒
             ctx.log.info("Got message!")
             Behaviors.same
           }
