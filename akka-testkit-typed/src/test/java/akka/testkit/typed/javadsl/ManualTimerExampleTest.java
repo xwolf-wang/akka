@@ -1,17 +1,17 @@
 /**
- * Copyright (C) 2017 Lightbend Inc. <http://www.lightbend.com/>
+ * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit.typed.javadsl;
 
 //#manual-scheduling-simple
-import java.util.concurrent.TimeUnit;
 
 import akka.actor.typed.Behavior;
 import akka.testkit.typed.javadsl.ManualTime;
 import akka.testkit.typed.javadsl.TestKitJunitResource;
 import org.junit.ClassRule;
 import org.scalatest.junit.JUnitSuite;
-import scala.concurrent.duration.Duration;
+import java.time.Duration;
 
 import akka.actor.typed.javadsl.Behaviors;
 
@@ -33,8 +33,8 @@ public class ManualTimerExampleTest extends JUnitSuite {
   public void testScheduleNonRepeatedTicks() {
     TestProbe<Tock> probe = testKit.createTestProbe();
     Behavior<Tick> behavior = Behaviors.withTimers(timer -> {
-      timer.startSingleTimer("T", new Tick(), Duration.create(10, TimeUnit.MILLISECONDS));
-      return Behaviors.immutable( (ctx, tick) -> {
+      timer.startSingleTimer("T", new Tick(), Duration.ofMillis(10));
+      return Behaviors.receive( (ctx, tick) -> {
         probe.ref().tell(new Tock());
         return Behaviors.same();
       });
@@ -42,12 +42,12 @@ public class ManualTimerExampleTest extends JUnitSuite {
 
     testKit.spawn(behavior);
 
-    manualTime.expectNoMessageFor(Duration.create(9, TimeUnit.MILLISECONDS), probe);
+    manualTime.expectNoMessageFor(Duration.ofMillis(9), probe);
 
-    manualTime.timePasses(Duration.create(2, TimeUnit.MILLISECONDS));
+    manualTime.timePasses(Duration.ofMillis(2));
     probe.expectMessageClass(Tock.class);
 
-    manualTime.expectNoMessageFor(Duration.create(10, TimeUnit.SECONDS), probe);
+    manualTime.expectNoMessageFor(Duration.ofSeconds(10), probe);
   }
 
 

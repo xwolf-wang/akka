@@ -4,7 +4,7 @@
 
 package akka.stream.impl
 
-import java.util.concurrent.{ TimeUnit, TimeoutException }
+import java.util.concurrent.TimeoutException
 
 import akka.Done
 import akka.stream.scaladsl._
@@ -290,9 +290,9 @@ class TimeoutsSpec extends StreamSpec {
       RunnableGraph.fromGraph(GraphDSL.create() { implicit b ⇒
         import GraphDSL.Implicits._
         val timeoutStage = b.add(BidiFlow.bidirectionalIdleTimeout[String, Int](2.seconds))
-        Source.fromPublisher(upWrite) ~> timeoutStage.in1;
+        Source.fromPublisher(upWrite) ~> timeoutStage.in1
         timeoutStage.out1 ~> Sink.fromSubscriber(downRead)
-        Sink.fromSubscriber(upRead) <~ timeoutStage.out2;
+        Sink.fromSubscriber(upRead) <~ timeoutStage.out2
         timeoutStage.in2 <~ Source.fromPublisher(downWrite)
         ClosedShape
       }).run()
@@ -338,9 +338,9 @@ class TimeoutsSpec extends StreamSpec {
       RunnableGraph.fromGraph(GraphDSL.create() { implicit b ⇒
         import GraphDSL.Implicits._
         val timeoutStage = b.add(BidiFlow.bidirectionalIdleTimeout[String, Int](2.seconds))
-        Source.fromPublisher(upWrite) ~> timeoutStage.in1;
+        Source.fromPublisher(upWrite) ~> timeoutStage.in1
         timeoutStage.out1 ~> Sink.fromSubscriber(downRead)
-        Sink.fromSubscriber(upRead) <~ timeoutStage.out2;
+        Sink.fromSubscriber(upRead) <~ timeoutStage.out2
         timeoutStage.in2 <~ Source.fromPublisher(downWrite)
         ClosedShape
       }).run()
@@ -361,7 +361,6 @@ class TimeoutsSpec extends StreamSpec {
 class TimeoutChecksSpec extends WordSpecLike with Matchers {
 
   "Timeout check interval" must {
-    import scala.concurrent.duration.{ Duration, FiniteDuration }
 
     "run twice for timeouts under 800ms" in {
       Timers.timeoutCheckInterval(800.millis) should ===(100.millis)

@@ -1,9 +1,10 @@
 /**
- * Copyright (C) 2009-2018 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit.typed.javadsl
 
-import java.util.concurrent.TimeUnit
+import java.time.Duration
 
 import akka.actor.Scheduler
 import akka.actor.typed.{ ActorRef, ActorSystem, Behavior, Props }
@@ -12,8 +13,7 @@ import akka.testkit.typed.internal.TestKitUtils
 import akka.testkit.typed.scaladsl.{ ActorTestKit ⇒ ScalaTestKit }
 import akka.util.Timeout
 import com.typesafe.config.Config
-
-import scala.concurrent.duration.Duration
+import akka.util.JavaDurationConverters._
 
 object ActorTestKit {
 
@@ -54,7 +54,7 @@ object ActorTestKit {
    *                             no exception is thrown.
    */
   def shutdown(system: ActorSystem[_], duration: Duration, throwIfShutdownTimesOut: Boolean): Unit = {
-    TestKitUtils.shutdown(system, duration, throwIfShutdownTimesOut)
+    TestKitUtils.shutdown(system, duration.asScala, throwIfShutdownTimesOut)
   }
 
   /**
@@ -76,7 +76,7 @@ object ActorTestKit {
     val settings = TestKitSettings.create(system)
     shutdown(
       system,
-      settings.DefaultActorSystemShutdownTimeout,
+      settings.DefaultActorSystemShutdownTimeout.asJava,
       settings.ThrowOnShutdownTimeout
     )
   }

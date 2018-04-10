@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2018 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit.typed.internal
 
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -48,6 +49,10 @@ import scala.concurrent.duration.{ Duration, FiniteDuration }
   override def watch[U](other: ActorRef[U]): Unit = {
     effectQueue.offer(Watched(other))
     super.watch(other)
+  }
+  override def watchWith[U](other: ActorRef[U], msg: T): Unit = {
+    effectQueue.offer(Watched(other))
+    super.watchWith(other, msg)
   }
   override def unwatch[U](other: ActorRef[U]): Unit = {
     effectQueue.offer(Unwatched(other))

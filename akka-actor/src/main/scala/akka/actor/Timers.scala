@@ -1,11 +1,11 @@
 /**
  * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor
 
 import scala.concurrent.duration.FiniteDuration
 import akka.annotation.DoNotInherit
-import akka.dispatch.Envelope
 import akka.util.OptionVal
 
 /**

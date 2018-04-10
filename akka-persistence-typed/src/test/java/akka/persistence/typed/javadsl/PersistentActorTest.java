@@ -1,32 +1,31 @@
 /**
  * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.persistence.typed.javadsl;
 
 import akka.actor.typed.ActorRef;
+import akka.actor.typed.Behavior;
+import akka.actor.typed.SupervisorStrategy;
 import akka.actor.typed.javadsl.Behaviors;
 import akka.japi.Pair;
 import akka.japi.function.Function3;
-import akka.persistence.typed.scaladsl.PersistentActorSpec;
-import akka.persistence.typed.scaladsl.PersistentActorSpec$;
-import akka.testkit.AkkaJUnitActorSystemResource;
+import akka.persistence.typed.scaladsl.PersistentBehaviorSpec;
 import akka.testkit.typed.javadsl.TestKitJunitResource;
-import akka.testkit.typed.scaladsl.ActorTestKit;
 import akka.testkit.typed.javadsl.TestProbe;
 import org.junit.ClassRule;
 import org.junit.Test;
-import scala.concurrent.duration.FiniteDuration;
+import org.scalatest.junit.JUnitSuite;
 
+import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 
 import static java.util.Collections.singletonList;
-import static org.junit.Assert.assertEquals;
 
-public class PersistentActorTest {
+public class PersistentActorTest extends JUnitSuite {
 
   @ClassRule
-  public static final TestKitJunitResource testKit = new TestKitJunitResource(PersistentActorSpec$.MODULE$.config());
+  public static final TestKitJunitResource testKit = new TestKitJunitResource(PersistentBehaviorSpec.conf());
 
   static final Incremented timeoutEvent = new Incremented(100);
   static final State emptyState = new State(0, Collections.emptyList());
@@ -202,15 +201,15 @@ public class PersistentActorTest {
           })
           .matchCommand(IncrementLater.class, (ctx, state, command) -> {
             ActorRef<Object> delay = ctx.spawnAnonymous(Behaviors.withTimers(timers -> {
-              timers.startSingleTimer(Tick.instance, Tick.instance, FiniteDuration.create(10, TimeUnit.MILLISECONDS));
-              return Behaviors.immutable((context, o) -> Behaviors.stopped());
+              timers.startSingleTimer(Tick.instance, Tick.instance, Duration.ofMillis(10));
+              return Behaviors.receive((context, o) -> Behaviors.stopped());
             }));
             ctx.watchWith(delay, new DelayFinished());
             return Effect().none();
           })
           .matchCommand(DelayFinished.class, (ctx, state, finished) -> Effect().persist(new Incremented(10)))
           .matchCommand(Increment100OnTimeout.class, (ctx, state, msg) -> {
-            ctx.setReceiveTimeout(FiniteDuration.create(10, TimeUnit.MILLISECONDS), new Timeout());
+            ctx.setReceiveTimeout(Duration.ofMillis(10), new Timeout());
             return Effect().none();
           })
           .matchCommand(Timeout.class,
@@ -259,7 +258,7 @@ public class PersistentActorTest {
 
   @Test
   public void persistEvents() {
-    ActorRef<Command> c = testKit.spawn(counter("c2"));
+    ActorRef<Command> c = testKit.spawn(counter("c1"));
     TestProbe<State> probe = testKit.createTestProbe();
     c.tell(Increment.instance);
     c.tell(new GetValue(probe.ref()));
@@ -287,7 +286,7 @@ public class PersistentActorTest {
   @Test
   public void handleTerminatedSignal() {
     TestProbe<Pair<State, Incremented>> eventHandlerProbe = testKit.createTestProbe();
-    ActorRef<Command> c = testKit.spawn(counter("c2", eventHandlerProbe.ref()));
+    ActorRef<Command> c = testKit.spawn(counter("c3", eventHandlerProbe.ref()));
     c.tell(Increment.instance);
     c.tell(new IncrementLater());
     eventHandlerProbe.expectMessage(Pair.create(emptyState, new Incremented(1)));
@@ -297,7 +296,7 @@ public class PersistentActorTest {
   @Test
   public void handleReceiveTimeout() {
     TestProbe<Pair<State, Incremented>> eventHandlerProbe = testKit.createTestProbe();
-    ActorRef<Command> c = testKit.spawn(counter("c1", eventHandlerProbe.ref()));
+    ActorRef<Command> c = testKit.spawn(counter("c4", eventHandlerProbe.ref()));
     c.tell(new Increment100OnTimeout());
     eventHandlerProbe.expectMessage(Pair.create(emptyState, timeoutEvent));
   }
@@ -306,9 +305,23 @@ public class PersistentActorTest {
   public void chainableSideEffectsWithEvents() {
     TestProbe<Pair<State, Incremented>> eventHandlerProbe = testKit.createTestProbe();
     TestProbe<String> loggingProbe = testKit.createTestProbe();
-    ActorRef<Command> c = testKit.spawn(counter("c1", eventHandlerProbe.ref(), loggingProbe.ref()));
+    ActorRef<Command> c = testKit.spawn(counter("c5", eventHandlerProbe.ref(), loggingProbe.ref()));
     c.tell(new EmptyEventsListAndThenLog());
     loggingProbe.expectMessage(loggingOne);
+  }
+
+  @Test
+  public void workWhenWrappedInOtherBehavior() {
+    Behavior<Command> behavior = Behaviors.supervise(counter("c6")).onFailure(
+        SupervisorStrategy.restartWithBackoff(Duration.ofSeconds(1),
+            Duration.ofSeconds(10), 0.1)
+    );
+    ActorRef<Command> c = testKit.spawn(behavior);
+
+    TestProbe<State> probe = testKit.createTestProbe();
+    c.tell(Increment.instance);
+    c.tell(new GetValue(probe.ref()));
+    probe.expectMessage(new State(1, singletonList(0)));
   }
 
   @Test
@@ -336,7 +349,7 @@ public class PersistentActorTest {
     TestProbe<State> probe = testKit.createTestProbe();
     ActorRef<Command> c = testKit.spawn(counter("c12"));
     c.tell(new StopThenLog());
-    probe.expectTerminated(c, FiniteDuration.create(1, TimeUnit.SECONDS));
+    probe.expectTerminated(c, Duration.ofSeconds(1));
   }
   // FIXME test with by state command handler
 }

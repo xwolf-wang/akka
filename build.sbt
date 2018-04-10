@@ -1,6 +1,7 @@
 import akka.{ParadoxSupport, AutomaticModuleName}
 
-enablePlugins(akka.TimeStampede, akka.NoPublish)  // FIXME akka.UnidocRoot, akka.UnidocWithPrValidation
+// FIXME enablePlugins(UnidocRoot, TimeStampede, UnidocWithPrValidation, NoPublish, CopyrightHeader, CopyrightHeaderInPr)
+enablePlugins(TimeStampede, NoPublish)
 disablePlugins(MimaPlugin)
 
 import com.typesafe.sbt.SbtMultiJvm.MultiJvmKeys.MultiJvm
@@ -51,7 +52,14 @@ lazy val root = Project(
   base = file(".")
 ).aggregate(aggregatedProjects: _*)
  .settings(rootSettings: _*)
+<<<<<<< HEAD
  // FIXME .settings(unidocRootIgnoreProjects := Seq(remoteTests, benchJmh, protobuf, akkaScalaNightly, docs))
+=======
+ .settings(unidocRootIgnoreProjects := Seq(remoteTests, benchJmh, protobuf, akkaScalaNightly, docs))
+ .settings(
+   unmanagedSources in(Compile, headerCreate) := (baseDirectory.value / "project").**("*.scala").get
+ )
+>>>>>>> master
 
 lazy val actor = akkaModule("akka-actor")
   .settings(Dependencies.actor)
@@ -82,20 +90,31 @@ lazy val agent = akkaModule("akka-agent")
 lazy val akkaScalaNightly = akkaModule("akka-scala-nightly")
   // remove dependencies that we have to build ourselves (Scala STM)
   .aggregate(aggregatedProjects diff List[ProjectReference](agent, docs): _*)
+<<<<<<< HEAD
   .disablePlugins(MimaPlugin) // FIXME ValidatePullRequest
+=======
+  .disablePlugins(MimaPlugin)
+  .disablePlugins(ValidatePullRequest, MimaPlugin, CopyrightHeaderInPr)
+>>>>>>> master
 
 lazy val benchJmh = akkaModule("akka-bench-jmh")
   .dependsOn(
     Seq(
       actor,
       stream, streamTests,
-      persistence, distributedData,
+      persistence, persistenceTyped,
+      distributedData,
       testkit
     ).map(_ % "compile->compile;compile->test;provided->provided"): _*
   )
   .settings(Dependencies.benchJmh)
+<<<<<<< HEAD
   .enablePlugins(JmhPlugin, NoPublish) // FIXME ScaladocNoVerificationOfDiagrams
   .disablePlugins(MimaPlugin, WhiteSourcePlugin) // FIXME ValidatePullRequest
+=======
+  .enablePlugins(JmhPlugin, ScaladocNoVerificationOfDiagrams, NoPublish, CopyrightHeader)
+  .disablePlugins(MimaPlugin, WhiteSourcePlugin, ValidatePullRequest, CopyrightHeaderInPr)
+>>>>>>> master
 
 lazy val camel = akkaModule("akka-camel")
   .dependsOn(actor, slf4j, testkit % "test->test")

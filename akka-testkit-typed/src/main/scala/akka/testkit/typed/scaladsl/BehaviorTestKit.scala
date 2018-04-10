@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2018 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit.typed.scaladsl
 
 import akka.actor.typed.{ Behavior, Signal }
@@ -9,6 +10,7 @@ import akka.testkit.typed.Effect
 import akka.testkit.typed.internal.BehaviorTestKitImpl
 
 import scala.collection.immutable
+import scala.reflect.ClassTag
 
 object BehaviorTestKit {
   def apply[T](initialBehavior: Behavior[T], name: String): BehaviorTestKit[T] =
@@ -57,10 +59,26 @@ trait BehaviorTestKit[T] {
   def retrieveAllEffects(): immutable.Seq[Effect]
 
   /**
+   * Returns if there have been any effects.
+   */
+  def hasEffects(): Boolean
+
+  /**
    * Asserts that the oldest effect is the expectedEffect. Removing it from
    * further assertions.
    */
   def expectEffect(expectedEffect: Effect): Unit
+
+  /**
+   * Asserts that the oldest effect is of type T. Consumes and returns the concrete effect for
+   * further direct assertions.
+   */
+  def expectEffectType[E <: Effect](implicit classTag: ClassTag[E]): E
+
+  /**
+   * Asserts that the oldest effect matches the given partial function.
+   */
+  def expectEffectPF[R](f: PartialFunction[Effect, R]): R
 
   /**
    * The current behavior, can change any time `run` is called

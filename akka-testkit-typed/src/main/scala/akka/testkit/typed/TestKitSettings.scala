@@ -1,6 +1,7 @@
 /**
  * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit.typed
 
 import com.typesafe.config.Config
@@ -63,7 +64,14 @@ final class TestKitSettings(val config: Config) {
   val ThrowOnShutdownTimeout: Boolean = config.getBoolean("throw-on-shutdown-timeout")
 
   /**
-   * Scale the `duration` with the configured `TestTimeFactor`
+   * Scala API: Scale the `duration` with the configured `TestTimeFactor`
    */
-  def dilated(duration: FiniteDuration): FiniteDuration = (duration * TestTimeFactor).asInstanceOf[FiniteDuration]
+  def dilated(duration: FiniteDuration): FiniteDuration =
+    (duration * TestTimeFactor).asInstanceOf[FiniteDuration]
+
+  /**
+   * Java API: Scale the `duration` with the configured `TestTimeFactor`
+   */
+  def dilated(duration: java.time.Duration): java.time.Duration =
+    java.time.Duration.ofMillis((duration.toMillis * TestTimeFactor).toLong)
 }

@@ -1,6 +1,7 @@
 /**
  * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.artery
 
 import java.util.concurrent.TimeUnit
@@ -21,8 +22,6 @@ import akka.util.{ OptionVal, Unsafe }
 import scala.concurrent.duration._
 import scala.concurrent.{ Future, Promise }
 import scala.util.control.NonFatal
-import akka.util.ByteStringBuilder
-import java.nio.ByteOrder
 import akka.remote.artery.OutboundHandshake.HandshakeReq
 import akka.serialization.SerializerWithStringManifest
 
@@ -62,8 +61,17 @@ private[remote] class Encoder(
       headerBuilder setVersion version
       headerBuilder setUid uniqueLocalAddress.uid
       private val localAddress = uniqueLocalAddress.address
-      private val serialization = SerializationExtension(system)
       private val serializationInfo = Serialization.Information(localAddress, system)
+
+      // lazy init of SerializationExtension to avoid loading serializers before ActorRefProvider has been initialized
+      private var _serialization: OptionVal[Serialization] = OptionVal.None
+      private def serialization: Serialization = _serialization match {
+        case OptionVal.Some(s) ⇒ s
+        case OptionVal.None ⇒
+          val s = SerializationExtension(system)
+          _serialization = OptionVal.Some(s)
+          s
+      }
 
       private val instruments: RemoteInstruments = RemoteInstruments(system)
 
@@ -131,8 +139,7 @@ private[remote] class Encoder(
           if (debugLogSendEnabled)
             log.debug(
               "sending remote message [{}] to [{}] from [{}]",
-              Logging.messageClassName(outboundEnvelope.message),
-              outboundEnvelope.recipient.getOrElse(""), outboundEnvelope.sender.getOrElse(""))
+              outboundEnvelope.message, outboundEnvelope.recipient.getOrElse(""), outboundEnvelope.sender.getOrElse(""))
 
           push(out, envelope)
 
@@ -580,7 +587,16 @@ private[remote] class Deserializer(
   override def createLogic(inheritedAttributes: Attributes): GraphStageLogic =
     new GraphStageLogic(shape) with InHandler with OutHandler with StageLogging {
       private val instruments: RemoteInstruments = RemoteInstruments(system)
-      private val serialization = SerializationExtension(system)
+
+      // lazy init of SerializationExtension to avoid loading serializers before ActorRefProvider has been initialized
+      private var _serialization: OptionVal[Serialization] = OptionVal.None
+      private def serialization: Serialization = _serialization match {
+        case OptionVal.Some(s) ⇒ s
+        case OptionVal.None ⇒
+          val s = SerializationExtension(system)
+          _serialization = OptionVal.Some(s)
+          s
+      }
 
       override protected def logSource = classOf[Deserializer]
 
@@ -642,16 +658,31 @@ private[remote] class DuplicateHandshakeReq(
 
   override def createLogic(inheritedAttributes: Attributes): GraphStageLogic =
     new GraphStageLogic(shape) with InHandler with OutHandler {
-      private val (serializerId, manifest) = {
-        val serialization = SerializationExtension(system)
-        val ser = serialization.serializerFor(classOf[HandshakeReq])
-        val m = ser match {
-          case s: SerializerWithStringManifest ⇒
-            s.manifest(HandshakeReq(inboundContext.localAddress, inboundContext.localAddress.address))
-          case _ ⇒ ""
-        }
-        (ser.identifier, m)
+
+      // lazy init of SerializationExtension to avoid loading serializers before ActorRefProvider has been initialized
+      var _serializerId: Int = -1
+      var _manifest = ""
+      def serializerId: Int = {
+        lazyInitOfSerializer()
+        _serializerId
       }
+      def manifest: String = {
+        lazyInitOfSerializer()
+        _manifest
+      }
+      def lazyInitOfSerializer(): Unit = {
+        if (_serializerId == -1) {
+          val serialization = SerializationExtension(system)
+          val ser = serialization.serializerFor(classOf[HandshakeReq])
+          _manifest = ser match {
+            case s: SerializerWithStringManifest ⇒
+              s.manifest(HandshakeReq(inboundContext.localAddress, inboundContext.localAddress.address))
+            case _ ⇒ ""
+          }
+          _serializerId = ser.identifier
+        }
+      }
+
       var currentIterator: Iterator[InboundEnvelope] = Iterator.empty
 
       override def onPush(): Unit = {

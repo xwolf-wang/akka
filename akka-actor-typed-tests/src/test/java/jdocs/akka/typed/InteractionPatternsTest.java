@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2018 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package jdocs.akka.typed;
 
 import akka.actor.typed.ActorRef;
@@ -13,10 +14,10 @@ import akka.util.Timeout;
 import org.junit.Test;
 import org.scalatest.junit.JUnitSuite;
 import scala.concurrent.Await;
-import scala.concurrent.duration.Duration;
 import scala.concurrent.duration.FiniteDuration;
 
 import java.net.URI;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
@@ -31,7 +32,7 @@ public class InteractionPatternsTest extends JUnitSuite {
     }
   }
 
-  static final Behavior<PrintMe> printerBehavior = Behaviors.immutable(PrintMe.class)
+  static final Behavior<PrintMe> printerBehavior = Behaviors.receive(PrintMe.class)
     .onMessage(PrintMe.class, (ctx, printMe) -> {
       ctx.getLog().info(printMe.message);
       return Behaviors.same();
@@ -60,7 +61,7 @@ public class InteractionPatternsTest extends JUnitSuite {
 
     // #request-response-respond
     // actor behavior
-    Behaviors.immutable(Request.class)
+    Behaviors.receive(Request.class)
       .onMessage(Request.class, (ctx, request) -> {
         // ... process request ...
         request.respondTo.tell(new Response("Here's your response!"));
@@ -169,7 +170,7 @@ public class InteractionPatternsTest extends JUnitSuite {
       }
     }
 
-    public static class Translator extends Behaviors.MutableBehavior<Command> {
+    public static class Translator extends MutableBehavior<Command> {
       private final ActorContext<Command> ctx;
       private final ActorRef<Backend.Request> backend;
       private final ActorRef<Backend.Response> backendResponseAdapter;
@@ -238,7 +239,8 @@ public class InteractionPatternsTest extends JUnitSuite {
     ref.tell(new PrintMe("message 2"));
     // #fire-and-forget-doit
 
-    Await.ready(system.terminate(), Duration.create(3, TimeUnit.SECONDS));
+    system.terminate();
+    system.getWhenTerminated().toCompletableFuture().get(5, TimeUnit.SECONDS);
   }
 
   //#timer
@@ -283,13 +285,13 @@ public class InteractionPatternsTest extends JUnitSuite {
   private static class TimeoutMsg implements Msg {
   }
 
-  public static Behavior<Msg> behavior(ActorRef<Batch> target, FiniteDuration after, int maxSize) {
+  public static Behavior<Msg> behavior(ActorRef<Batch> target, Duration after, int maxSize) {
     return Behaviors.withTimers(timers -> idle(timers, target, after, maxSize));
   }
 
   private static Behavior<Msg> idle(TimerScheduler<Msg> timers, ActorRef<Batch> target,
-                                    FiniteDuration after, int maxSize) {
-    return Behaviors.immutable(Msg.class)
+                                    Duration after, int maxSize) {
+    return Behaviors.receive(Msg.class)
       .onMessage(Msg.class, (ctx, msg) -> {
         timers.startSingleTimer(TIMER_KEY, new TimeoutMsg(), after);
         List<Msg> buffer = new ArrayList<>();
@@ -300,8 +302,8 @@ public class InteractionPatternsTest extends JUnitSuite {
   }
 
   private static Behavior<Msg> active(List<Msg> buffer, TimerScheduler<Msg> timers,
-                                      ActorRef<Batch> target, FiniteDuration after, int maxSize) {
-    return Behaviors.immutable(Msg.class)
+                                      ActorRef<Batch> target, Duration after, int maxSize) {
+    return Behaviors.receive(Msg.class)
       .onMessage(TimeoutMsg.class, (ctx, msg) -> {
         target.tell(new Batch(buffer));
         return idle(timers, target, after, maxSize);
@@ -325,19 +327,20 @@ public class InteractionPatternsTest extends JUnitSuite {
     final ActorSystem<Object> system = ActorSystem.create(Behaviors.empty(), "timers-sample");
     TestProbe<Batch> probe = TestProbe.create("batcher", system);
     ActorRef<Msg> bufferer = Await.result(system.systemActorOf(
-      behavior(probe.ref(), new FiniteDuration(1, TimeUnit.SECONDS), 10),
-      "batcher", Props.empty(), akka.util.Timeout.apply(1, TimeUnit.SECONDS)),
-      new FiniteDuration(1, TimeUnit.SECONDS));
+      behavior(probe.ref(), Duration.ofSeconds(1), 10),
+      "batcher", Props.empty(), akka.util.Timeout.create(Duration.ofSeconds(1))),
+        FiniteDuration.create(3, TimeUnit.SECONDS));
 
     ExcitingMessage msgOne = new ExcitingMessage("one");
     ExcitingMessage msgTwo = new ExcitingMessage("two");
     bufferer.tell(msgOne);
     bufferer.tell(msgTwo);
-    probe.expectNoMessage(new FiniteDuration(1, TimeUnit.MILLISECONDS));
-    probe.expectMessage(new FiniteDuration(2, TimeUnit.SECONDS),
+    probe.expectNoMessage(Duration.ofMillis(1));
+    probe.expectMessage(Duration.ofSeconds(2),
       new Batch(Arrays.asList(msgOne, msgTwo)));
 
-    Await.ready(system.terminate(), Duration.create(3, TimeUnit.SECONDS));
+    system.terminate();
+    system.getWhenTerminated().toCompletableFuture().get(5, TimeUnit.SECONDS);
   }
 
 
@@ -358,7 +361,7 @@ public class InteractionPatternsTest extends JUnitSuite {
   }
 
   static final Behavior<HalCommand> halBehavior =
-    Behaviors.immutable(HalCommand.class)
+    Behaviors.receive(HalCommand.class)
       .onMessage(OpenThePodBayDoorsPlease.class, (ctx, msg) -> {
         msg.respondTo.tell(new HalResponse("I'm sorry, Dave. I'm afraid I can't do that."));
         return Behaviors.same();
@@ -416,7 +419,7 @@ public class InteractionPatternsTest extends JUnitSuite {
           }
         });
 
-      return Behaviors.immutable(DaveProtocol.class)
+      return Behaviors.receive(DaveProtocol.class)
         // the adapted message ends up being processed like any other
         // message sent to the actor
         .onMessage(AdaptedResponse.class, (innerCtx, response) -> {
@@ -510,7 +513,7 @@ public class InteractionPatternsTest extends JUnitSuite {
       final ActorRef<GetKeys> keyCabinet = ctx.spawn(keyCabinetBehavior, "key-cabinet");
       final ActorRef<GetWallet> drawer = ctx.spawn(drawerBehavior, "drawer");
 
-      return Behaviors.immutable(HomeCommand.class)
+      return Behaviors.receive(HomeCommand.class)
         .onMessage(LeaveHome.class, (innerCtx, msg) -> {
           ctx.spawn(new PrepareToLeaveHome(msg.who, msg.respondTo, keyCabinet, drawer), "leaving" + msg.who);
           return Behavior.same();
@@ -519,7 +522,7 @@ public class InteractionPatternsTest extends JUnitSuite {
   }
 
   // per session actor behavior
-  class PrepareToLeaveHome extends Behaviors.MutableBehavior<Object> {
+  class PrepareToLeaveHome extends MutableBehavior<Object> {
     private final String whoIsLeaving;
     private final ActorRef<ReadyToLeaveHome> respondTo;
     private final ActorRef<GetKeys> keyCabinet;

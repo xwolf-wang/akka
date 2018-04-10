@@ -1,6 +1,7 @@
 /**
  * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka
 
 import sbt._
@@ -14,14 +15,13 @@ object Dependencies {
   lazy val scalaCheckVersion = settingKey[String]("The version of ScalaCheck to use.")
   lazy val java8CompatVersion = settingKey[String]("The version of scala-java8-compat to use.")
   val junitVersion = "4.12"
-  val sslConfigVersion = "0.2.2"
+  val sslConfigVersion = "0.2.3"
   val slf4jVersion = "1.7.25"
   val scalaXmlVersion = "1.0.6"
   val aeronVersion = "1.7.0"
 
   val Versions = Seq(
-    // crossScalaVersions := Seq("2.11.12", "2.12.4"), // FIXME make sure JDK9 stuff only is detected when we use Scala 2.12 https://github.com/sbt/sbt-multi-release-jar/issues/9
-    crossScalaVersions := Seq("2.12.4"),
+    crossScalaVersions := Seq("2.11.12", "2.12.5"),
     scalaVersion := System.getProperty("akka.build.scalaVersion", crossScalaVersions.value.head),
     scalaStmVersion := sys.props.get("akka.build.scalaStmVersion").getOrElse("0.8"),
     scalaCheckVersion := sys.props.get("akka.build.scalaCheckVersion").getOrElse(

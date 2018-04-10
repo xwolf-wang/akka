@@ -24,11 +24,9 @@ import akka.dispatch.{ RequiresMessageQueue, UnboundedMessageQueueSemantics }
 import akka.remote.artery.ArteryTransport
 import akka.remote.artery.aeron.ArteryAeronUdpTransport
 import akka.remote.artery.ArterySettings
-import akka.remote.artery.ArterySettings.AeronUpd
 import akka.util.OptionVal
 import akka.remote.artery.OutboundEnvelope
 import akka.remote.artery.SystemMessageDelivery.SystemMessageEnvelope
-import akka.remote.serialization.ActorRefResolveCache
 import akka.remote.serialization.ActorRefResolveThreadLocalCache
 import akka.remote.artery.tcp.ArteryTcpTransport
 
@@ -403,7 +401,7 @@ private[akka] class RemoteActorRefProvider(
             new EmptyLocalActorRef(this, RootActorPath(address) / elems, eventStream)
         }
       case _ ⇒
-        log.debug("resolve of unknown path [{}] failed", path)
+        log.debug("Resolve (deserialization) of unknown (invalid) path [{}], using deadLetters.", path)
         deadLetters
     }
   }
@@ -436,7 +434,7 @@ private[akka] class RemoteActorRefProvider(
         }
       }
     case _ ⇒
-      log.debug("resolve of unknown path [{}] failed", path)
+      log.debug("Resolve (deserialization) of unknown (invalid) path [{}], using deadLetters.", path)
       deadLetters
   }
 

@@ -2,6 +2,7 @@
  * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 /*  FIXME; this supposedly is the new way: https://github.com/sbt/sbt/blob/v1.0.1/build.sbt#L554-L562
+
 package akka
 
 import sbt._

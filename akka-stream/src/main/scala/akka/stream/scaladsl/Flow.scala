@@ -1,6 +1,7 @@
 /**
  * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.stream.scaladsl
 
 import akka.event.LoggingAdapter
@@ -48,9 +49,29 @@ final class Flow[-In, +Out, +Mat](
 
   override def viaMat[T, Mat2, Mat3](flow: Graph[FlowShape[Out, T], Mat2])(combine: (Mat, Mat2) ⇒ Mat3): Flow[In, T, Mat3] = {
     if (this.isIdentity) {
-      new Flow(
-        LinearTraversalBuilder.fromBuilder(flow.traversalBuilder, flow.shape, combine),
-        flow.shape).asInstanceOf[Flow[In, T, Mat3]]
+      // optimization by returning flow if possible since we know Mat2 == Mat3 from flow
+      if (combine == Keep.right) Flow.fromGraph(flow).asInstanceOf[Flow[In, T, Mat3]]
+      else {
+        // Keep.none is optimized and we know left means Mat3 == NotUsed
+        val useCombine =
+          if (combine == Keep.left) Keep.none
+          else combine
+        new Flow(
+          LinearTraversalBuilder.empty().append(flow.traversalBuilder, flow.shape, useCombine),
+          flow.shape).asInstanceOf[Flow[In, T, Mat3]]
+      }
+    } else if (flow.traversalBuilder eq Flow.identityTraversalBuilder) {
+      // optimization by returning this if possible since we know Mat2 == Mat from this
+      if (combine == Keep.left) this.asInstanceOf[Flow[In, T, Mat3]]
+      else {
+        // Keep.none is somewhat optimized and we know Mat == NotUsed
+        val useCombine =
+          if (combine == Keep.right) Keep.none
+          else combine
+        new Flow(
+          traversalBuilder.append(LinearTraversalBuilder.empty(), shape, useCombine),
+          FlowShape[In, T](shape.in, flow.shape.out))
+      }
     } else {
       new Flow(
         traversalBuilder.append(flow.traversalBuilder, flow.shape, combine),
@@ -288,7 +309,8 @@ final class Flow[-In, +Out, +Mat](
       }
 
   /** Converts this Scala DSL element to it's Java DSL counterpart. */
-  def asJava: javadsl.Flow[In, Out, Mat] = new javadsl.Flow(this)
+  def asJava[JIn <: In, JOut >: Out, JMat >: Mat]: javadsl.Flow[JIn, JOut, JMat] =
+    new javadsl.Flow(this)
 }
 
 object Flow {
@@ -500,20 +522,9 @@ object Flow {
 
   /**
    * Creates a real `Flow` upon receiving the first element. Internal `Flow` will not be created
-   * if there are no elements, because of completion or error.
-   * The materialized value of the `Flow` will be the materialized
-   * value of the created internal flow.
+   * if there are no elements, because of completion, cancellation, or error.
    *
-   * If `flowFactory` throws an exception and the supervision decision is
-   * [[akka.stream.Supervision.Stop]] the materialized value of the flow will be completed with
-   * the result of the `fallback`. For all other supervision options it will
-   * try to create flow with the next element.
-   *
-   * `fallback` will be executed when there was no elements and completed is received from upstream
-   * or when there was an exception either thrown by the `flowFactory` or during the internal flow
-   * materialization process.
-   *
-   * Adheres to the [[ActorAttributes.SupervisionStrategy]] attribute.
+   * The materialized value of the `Flow` is the value that is created by the `fallback` function.
    *
    * '''Emits when''' the internal flow is successfully created and it emits
    *
@@ -523,8 +534,29 @@ object Flow {
    *
    * '''Cancels when''' downstream cancels
    */
+  @Deprecated
+  @deprecated("Use lazyInitAsync instead. (lazyInitAsync returns a flow with a more useful materialized value.)", "2.5.12")
   def lazyInit[I, O, M](flowFactory: I ⇒ Future[Flow[I, O, M]], fallback: () ⇒ M): Flow[I, O, M] =
-    Flow.fromGraph(new LazyFlow[I, O, M](flowFactory, fallback))
+    Flow.fromGraph(new LazyFlow[I, O, M](flowFactory)).mapMaterializedValue(_ ⇒ fallback())
+
+  /**
+   * Creates a real `Flow` upon receiving the first element. Internal `Flow` will not be created
+   * if there are no elements, because of completion, cancellation, or error.
+   *
+   * The materialized value of the `Flow` is a `Future[Option[M]]` that is completed with `Some(mat)` when the internal
+   * flow gets materialized or with `None` when there where no elements. If the flow materialization (including
+   * the call of the `flowFactory`) fails then the future is completed with a failure.
+   *
+   * '''Emits when''' the internal flow is successfully created and it emits
+   *
+   * '''Backpressures when''' the internal flow is successfully created and it backpressures
+   *
+   * '''Completes when''' upstream completes and all elements have been emitted from the internal flow
+   *
+   * '''Cancels when''' downstream cancels
+   */
+  def lazyInitAsync[I, O, M](flowFactory: () ⇒ Future[Flow[I, O, M]]): Flow[I, O, Future[Option[M]]] =
+    Flow.fromGraph(new LazyFlow[I, O, M](_ ⇒ flowFactory()))
 }
 
 object RunnableGraph {
@@ -1600,7 +1632,7 @@ trait FlowOps[+Out, +Mat] {
     via(Batch(max, costFn, seed, aggregate).withAttributes(DefaultAttributes.batchWeighted))
 
   /**
-   * Allows a faster downstream to progress independently of a slower publisher by extrapolating elements from an older
+   * Allows a faster downstream to progress independently of a slower upstream by extrapolating elements from an older
    * element until new element comes from the upstream. For example an expand step might repeat the last element for
    * the subscriber until it receives an update from upstream.
    *
@@ -1609,7 +1641,7 @@ trait FlowOps[+Out, +Mat] {
    * subscriber.
    *
    * Expand does not support [[akka.stream.Supervision.Restart]] and [[akka.stream.Supervision.Resume]].
-   * Exceptions from the `seed` or `extrapolate` functions will complete the stream with failure.
+   * Exceptions from the `seed` function will complete the stream with failure.
    *
    * '''Emits when''' downstream stops backpressuring
    *
@@ -1619,11 +1651,43 @@ trait FlowOps[+Out, +Mat] {
    *
    * '''Cancels when''' downstream cancels
    *
-   * @param seed Provides the first state for extrapolation using the first unconsumed element
-   * @param extrapolate Takes the current extrapolation state to produce an output element and the next extrapolation
-   *                    state.
+   * @param expander       Takes the current extrapolation state to produce an output element and the next extrapolation
+   *                       state.
+   * @see [[#extrapolate]] for a version that always preserves the original element and allows for an initial "startup"
+   *                       element.
    */
-  def expand[U](extrapolate: Out ⇒ Iterator[U]): Repr[U] = via(new Expand(extrapolate))
+  def expand[U](expander: Out ⇒ Iterator[U]): Repr[U] = via(new Expand(expander))
+
+  /**
+   * Allows a faster downstream to progress independent of a slower upstream.
+   *
+   * This is achieved by introducing "extrapolated" elements - based on those from upstream - whenever downstream
+   * signals demand.
+   *
+   * Extrapolate does not support [[akka.stream.Supervision.Restart]] and [[akka.stream.Supervision.Resume]].
+   * Exceptions from the `extrapolate` function will complete the stream with failure.
+   *
+   * '''Emits when''' downstream stops backpressuring, AND EITHER upstream emits OR initial element is present OR
+   * `extrapolate` is non-empty and applicable
+   *
+   * '''Backpressures when''' downstream backpressures or current `extrapolate` runs empty
+   *
+   * '''Completes when''' upstream completes and current `extrapolate` runs empty
+   *
+   * '''Cancels when''' downstream cancels
+   *
+   * @param extrapolator takes the current upstream element and provides a sequence of "extrapolated" elements based
+   *                    on the original, to be emitted in case downstream signals demand.
+   * @param initial the initial element to be emitted, in case upstream is able to stall the entire stream.
+   * @see [[#expand]]    for a version that can overwrite the original element.
+   */
+  def extrapolate[U >: Out](extrapolator: U ⇒ Iterator[U], initial: Option[U] = None): Repr[U] = {
+    val expandArg = (u: U) ⇒ Iterator.single(u) ++ extrapolator(u)
+
+    val expandStep = new Expand[U, U](expandArg)
+
+    initial.map(e ⇒ prepend(Source.single(e)).via(expandStep)).getOrElse(via(expandStep))
+  }
 
   /**
    * Adds a fixed size buffer in the flow that allows to store elements from a faster upstream until it becomes full.
@@ -1987,6 +2051,38 @@ trait FlowOps[+Out, +Mat] {
    * Sends elements downstream with speed limited to `elements/per`. In other words, this stage set the maximum rate
    * for emitting messages. This combinator works for streams where all elements have the same cost or length.
    *
+   * Throttle implements the token bucket model. There is a bucket with a given token capacity (burst size).
+   * Tokens drops into the bucket at a given rate and can be `spared` for later use up to bucket capacity
+   * to allow some burstiness. Whenever stream wants to send an element, it takes as many
+   * tokens from the bucket as element costs. If there isn't any, throttle waits until the
+   * bucket accumulates enough tokens. Elements that costs more than the allowed burst will be delayed proportionally
+   * to their cost minus available tokens, meeting the target rate. Bucket is full when stream just materialized and
+   * started.
+   *
+   * The burst size is calculated based on the given rate (`cost/per`) as 0.1 * rate, for example:
+   * - rate < 20/second => burst size 1
+   * - rate 20/second => burst size 2
+   * - rate 100/second => burst size 10
+   * - rate 200/second => burst size 20
+   *
+   * The throttle `mode` is [[akka.stream.ThrottleMode.Shaping]], which makes pauses before emitting messages to
+   * meet throttle rate.
+   *
+   * '''Emits when''' upstream emits an element and configured time per each element elapsed
+   *
+   * '''Backpressures when''' downstream backpressures or the incoming rate is higher than the speed limit
+   *
+   * '''Completes when''' upstream completes
+   *
+   * '''Cancels when''' downstream cancels
+   */
+  def throttle(elements: Int, per: FiniteDuration): Repr[Out] =
+    throttle(elements, per, maximumBurst = Throttle.AutomaticMaximumBurst, ConstantFun.oneInt, ThrottleMode.Shaping)
+
+  /**
+   * Sends elements downstream with speed limited to `elements/per`. In other words, this stage set the maximum rate
+   * for emitting messages. This combinator works for streams where all elements have the same cost or length.
+   *
    * Throttle implements the token bucket model. There is a bucket with a given token capacity (burst size or maximumBurst).
    * Tokens drops into the bucket at a given rate and can be `spared` for later use up to bucket capacity
    * to allow some burstiness. Whenever stream wants to send an element, it takes as many
@@ -2005,10 +2101,11 @@ trait FlowOps[+Out, +Mat] {
    *
    *  WARNING: Be aware that throttle is using scheduler to slow down the stream. This scheduler has minimal time of triggering
    *  next push. Consequently it will slow down the stream as it has minimal pause for emitting. This can happen in
-   *  case burst is 0 and speed is higher than 30 events per second. You need to consider another solution in case you are expecting
-   *  events being evenly spread with some small interval (30 milliseconds or less).
-   *  In other words the throttler always enforces the rate limit, but in certain cases (mostly due to limited scheduler resolution) it
-   *  enforces a tighter bound than what was prescribed. This can be also mitigated by increasing the burst size.
+   *  case burst is 0 and speed is higher than 30 events per second. You need to increase the `maximumBurst`  if
+   *  elements arrive with small interval (30 milliseconds or less). Use the overloaded `throttle` method without
+   *  `maximumBurst` parameter to automatically calculate the `maximumBurst` based on the given rate (`cost/per`).
+   *  In other words the throttler always enforces the rate limit when `maximumBurst` parameter is given, but in
+   *  certain cases (mostly due to limited scheduler resolution) it enforces a tighter bound than what was prescribed.
    *
    * '''Emits when''' upstream emits an element and configured time per each element elapsed
    *
@@ -2018,10 +2115,44 @@ trait FlowOps[+Out, +Mat] {
    *
    * '''Cancels when''' downstream cancels
    *
-   * @see [[#throttleEven]]
    */
   def throttle(elements: Int, per: FiniteDuration, maximumBurst: Int, mode: ThrottleMode): Repr[Out] =
     throttle(elements, per, maximumBurst, ConstantFun.oneInt, mode)
+
+  /**
+   * Sends elements downstream with speed limited to `cost/per`. Cost is
+   * calculating for each element individually by calling `calculateCost` function.
+   * This combinator works for streams when elements have different cost(length).
+   * Streams of `ByteString` for example.
+   *
+   * Throttle implements the token bucket model. There is a bucket with a given token capacity (burst size).
+   * Tokens drops into the bucket at a given rate and can be `spared` for later use up to bucket capacity
+   * to allow some burstiness. Whenever stream wants to send an element, it takes as many
+   * tokens from the bucket as element costs. If there isn't any, throttle waits until the
+   * bucket accumulates enough tokens. Elements that costs more than the allowed burst will be delayed proportionally
+   * to their cost minus available tokens, meeting the target rate. Bucket is full when stream just materialized and
+   * started.
+   *
+   * The burst size is calculated based on the given rate (`cost/per`) as 0.1 * rate, for example:
+   * - rate < 20/second => burst size 1
+   * - rate 20/second => burst size 2
+   * - rate 100/second => burst size 10
+   * - rate 200/second => burst size 20
+   *
+   * The throttle `mode` is [[akka.stream.ThrottleMode.Shaping]], which makes pauses before emitting messages to
+   * meet throttle rate.
+   *
+   * '''Emits when''' upstream emits an element and configured time per each element elapsed
+   *
+   * '''Backpressures when''' downstream backpressures or the incoming rate is higher than the speed limit
+   *
+   * '''Completes when''' upstream completes
+   *
+   * '''Cancels when''' downstream cancels
+   *
+   */
+  def throttle(cost: Int, per: FiniteDuration, costCalculation: (Out) ⇒ Int): Repr[Out] =
+    via(new Throttle(cost, per, Throttle.AutomaticMaximumBurst, costCalculation, ThrottleMode.Shaping))
 
   /**
    * Sends elements downstream with speed limited to `cost/per`. Cost is
@@ -2047,10 +2178,11 @@ trait FlowOps[+Out, +Mat] {
    *
    *  WARNING: Be aware that throttle is using scheduler to slow down the stream. This scheduler has minimal time of triggering
    *  next push. Consequently it will slow down the stream as it has minimal pause for emitting. This can happen in
-   *  case burst is 0 and speed is higher than 30 events per second. You need to consider another solution in case you are expecting
-   *  events being evenly spread with some small interval (30 milliseconds or less).
-   *  In other words the throttler always enforces the rate limit, but in certain cases (mostly due to limited scheduler resolution) it
-   *  enforces a tighter bound than what was prescribed. This can be also mitigated by increasing the burst size.
+   *  case burst is 0 and speed is higher than 30 events per second. You need to increase the `maximumBurst`  if
+   *  elements arrive with small interval (30 milliseconds or less). Use the overloaded `throttle` method without
+   *  `maximumBurst` parameter to automatically calculate the `maximumBurst` based on the given rate (`cost/per`).
+   *  In other words the throttler always enforces the rate limit when `maximumBurst` parameter is given, but in
+   *  certain cases (mostly due to limited scheduler resolution) it enforces a tighter bound than what was prescribed.
    *
    * '''Emits when''' upstream emits an element and configured time per each element elapsed
    *
@@ -2060,7 +2192,6 @@ trait FlowOps[+Out, +Mat] {
    *
    * '''Cancels when''' downstream cancels
    *
-   * @see [[#throttleEven]]
    */
   def throttle(cost: Int, per: FiniteDuration, maximumBurst: Int,
                costCalculation: (Out) ⇒ Int, mode: ThrottleMode): Repr[Out] =
@@ -2077,8 +2208,10 @@ trait FlowOps[+Out, +Mat] {
    * [[throttle()]] with maximumBurst attribute.
    * @see [[#throttle]]
    */
+  @Deprecated
+  @deprecated("Use throttle without `maximumBurst` parameter instead.", "2.5.12")
   def throttleEven(elements: Int, per: FiniteDuration, mode: ThrottleMode): Repr[Out] =
-    throttle(elements, per, Int.MaxValue, ConstantFun.oneInt, mode)
+    throttle(elements, per, Throttle.AutomaticMaximumBurst, ConstantFun.oneInt, mode)
 
   /**
    * This is a simplified version of throttle that spreads events evenly across the given time interval.
@@ -2090,9 +2223,11 @@ trait FlowOps[+Out, +Mat] {
    * [[throttle()]] with maximumBurst attribute.
    * @see [[#throttle]]
    */
+  @Deprecated
+  @deprecated("Use throttle without `maximumBurst` parameter instead.", "2.5.12")
   def throttleEven(cost: Int, per: FiniteDuration,
                    costCalculation: (Out) ⇒ Int, mode: ThrottleMode): Repr[Out] =
-    via(new Throttle(cost, per, Int.MaxValue, costCalculation, mode))
+    throttle(cost, per, Throttle.AutomaticMaximumBurst, costCalculation, mode)
 
   /**
    * Detaches upstream demand from downstream demand without detaching the

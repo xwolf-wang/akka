@@ -1,13 +1,14 @@
 /**
  * Copyright (C) 2017-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.typed.scaladsl
 
 import scala.concurrent.duration.FiniteDuration
 
 /**
  * Support for scheduled `self` messages in an actor.
- * It is used with `Actor.withTimers`.
+ * It is used with `Behaviors.withTimers`.
  * Timers are bound to the lifecycle of the actor that owns it,
  * and thus are cancelled automatically when it is restarted or stopped.
  *

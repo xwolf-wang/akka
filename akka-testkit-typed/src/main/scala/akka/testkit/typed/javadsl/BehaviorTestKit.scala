@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2018 Lightbend Inc. <http://www.lightbend.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit.typed.javadsl
 
 import akka.actor.typed.{ Behavior, Signal }
@@ -57,10 +58,21 @@ abstract class BehaviorTestKit[T] {
   def getAllEffects(): java.util.List[Effect]
 
   /**
+   * Returns if there have been any effects.
+   */
+  def hasEffects(): Boolean
+
+  /**
    * Asserts that the oldest effect is the expectedEffect. Removing it from
    * further assertions.
    */
   def expectEffect(expectedEffect: Effect): Unit
+
+  /**
+   * Asserts that the oldest effect is an instance of of class T. Consumes and returns the concrete effect for
+   * further direct assertions.
+   */
+  def expectEffectClass[T <: Effect](effectClass: Class[T]): T
 
   /**
    * The current behavior, can change any time `run` is called
