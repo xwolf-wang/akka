@@ -25,12 +25,10 @@ object AkkaBuild {
     // use the same value as in the build scope, so it can be overriden by stampVersion
     version := (version in ThisBuild).value)
 
-  lazy val rootSettings = parentSettings
-  /* FIXME original:
-    Release.settings ++
+  lazy val rootSettings = /* FIXME Release.settings ++
     UnidocRoot.akkaSettings ++
     Formatting.formatSettings ++
-    Protobuf.settings */ ++ Seq(
+    Protobuf.settings ++ */ Seq(
       parallelExecution in GlobalScope := System.getProperty("akka.parallelExecution", parallelExecutionByDefault.toString).toBoolean,
       version in ThisBuild := "2.5-SNAPSHOT"
     )
