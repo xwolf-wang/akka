@@ -1,7 +1,6 @@
 import akka.{ParadoxSupport, AutomaticModuleName}
 
-// FIXME enablePlugins(UnidocRoot, TimeStampede, UnidocWithPrValidation, NoPublish, CopyrightHeader, CopyrightHeaderInPr)
-enablePlugins(TimeStampede, NoPublish)
+enablePlugins(akka.TimeStampede, akka.NoPublish, CopyrightHeader, CopyrightHeaderInPr)  // FIXME akka.UnidocRoot, akka.UnidocWithPrValidation
 disablePlugins(MimaPlugin)
 
 import com.typesafe.sbt.SbtMultiJvm.MultiJvmKeys.MultiJvm

@@ -23,4 +23,4 @@ class LeveldbJournalNoAtomicPersistMultipleEventsSpec extends JournalSpec(
   override def supportsRejectingNonSerializableObjects = true
 
 }
-*/ 
+*/

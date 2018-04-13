@@ -4,7 +4,7 @@
 
 package akka
 
-//import akka.ValidatePullRequest.{ValidatePR, additionalTasks}
+// FIXME import akka.ValidatePullRequest.{ValidatePR, additionalTasks}
 import de.heikoseeberger.sbtheader.HeaderPlugin.autoImport._
 import de.heikoseeberger.sbtheader.{CommentCreator, HeaderPlugin}
 import sbt.Keys._
@@ -78,9 +78,10 @@ trait CopyrightHeader extends AutoPlugin {
 object CopyrightHeader extends CopyrightHeader
 
 object CopyrightHeaderInPr extends CopyrightHeader {
-
+ /* FIXME
   override val additional = Def.settings(
       //additionalTasks in ValidatePR += headerCheck in Compile,
       //additionalTasks in ValidatePR += headerCheck in Test
     )
+    */
 }

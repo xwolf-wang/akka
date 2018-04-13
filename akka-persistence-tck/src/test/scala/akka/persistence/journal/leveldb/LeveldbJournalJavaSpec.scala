@@ -17,4 +17,4 @@ class LeveldbJournalJavaSpec extends JournalSpec(
 
   override def supportsRejectingNonSerializableObjects = true
 }
-*/ 
+*/
