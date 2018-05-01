@@ -22,7 +22,7 @@ object Dependencies {
 
   val Versions = Seq(
     // crossScalaVersions := Seq("2.11.12", "2.12.5"), // FIXME make sure JDK9 stuff only is detected when we use Scala 2.12 https://github.com/sbt/sbt-multi-release-jar/issues/9
-    crossScalaVersions := Seq("2.12.5"),
+    crossScalaVersions := Seq("2.12.6"),
     scalaVersion := System.getProperty("akka.build.scalaVersion", crossScalaVersions.value.head),
     scalaStmVersion := sys.props.get("akka.build.scalaStmVersion").getOrElse("0.8"),
     scalaCheckVersion := sys.props.get("akka.build.scalaCheckVersion").getOrElse(

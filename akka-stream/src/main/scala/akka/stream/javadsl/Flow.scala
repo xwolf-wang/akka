@@ -484,6 +484,31 @@ final class Flow[In, Out, Mat](delegate: scaladsl.Flow[In, Out, Mat]) extends Gr
     new Flow(delegate.map(f.apply))
 
   /**
+   * This is a simplified version of `wireTap(Sink)` that takes only a simple procedure.
+   * Elements will be passed into this "side channel" function, and any of its results will be ignored.
+   *
+   * If the wire-tap operation is slow (it backpressures), elements that would've been sent to it will be dropped instead.
+   *
+   * This operation is useful for inspecting the passed through element, usually by means of side-effecting
+   * operations (such as `println`, or emitting metrics), for each element without having to modify it.
+   *
+   * For logging signals (elements, completion, error) consider using the [[log]] stage instead,
+   * along with appropriate `ActorAttributes.logLevels`.
+   *
+   * '''Emits when''' upstream emits an element; the same element will be passed to the attached function,
+   *                  as well as to the downstream stage
+   *
+   * '''Backpressures when''' downstream backpressures
+   *
+   * '''Completes when''' upstream completes
+   *
+   * '''Cancels when''' downstream cancels
+   *
+   */
+  def wireTap(f: function.Procedure[Out]): javadsl.Flow[In, Out, Mat] =
+    new Flow(delegate.wireTap(f(_)))
+
+  /**
    * Transform each input element into an `Iterable` of output elements that is
    * then flattened into the output stream.
    *
