@@ -80,6 +80,11 @@ private[cluster] final case class Gossip(
       throw new IllegalArgumentException("Nodes not part of cluster in reachability table, got [%s]"
         format inReachabilityButNotMember.mkString(", "))
 
+    val inReachabilityVersionsButNotMember = overview.reachability.versions.keySet diff members.map(_.uniqueAddress)
+    if (inReachabilityVersionsButNotMember.nonEmpty)
+      throw new IllegalArgumentException("Nodes not part of cluster in reachability versions table, got [%s]"
+        format inReachabilityVersionsButNotMember.mkString(", "))
+
     val seenButNotMember = overview.seen diff members.map(_.uniqueAddress)
     if (seenButNotMember.nonEmpty)
       throw new IllegalArgumentException("Nodes not part of cluster have marked the Gossip as seen, got [%s]"
