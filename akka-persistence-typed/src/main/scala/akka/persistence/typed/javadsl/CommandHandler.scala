@@ -50,7 +50,7 @@ object CommandHandlerBuilder {
     handler:          BiFunction[State, Command, Effect[Event, State]])
 }
 
-final class CommandHandlerBuilder[Command, Event, S <: State, State] @InternalApi private[persistence] (
+final class CommandHandlerBuilder[Command, Event, S <: State, State] @InternalApi private[akka] (
   val statePredicate: Predicate[S]) {
   import CommandHandlerBuilder.CommandHandlerCase
 

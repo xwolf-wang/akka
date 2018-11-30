@@ -253,12 +253,12 @@ Each command has a single `Effect` which can be:
 
 * Persist events
 * None: Accept the comment but no effects
-* Unhandled: Don't handle this message 
+* Unhandled: Don't handle this message
+* Stash: the current command is placed in a buffer and can be unstashed and processed later
 
 Note that there is only one of these. It is not possible to both persist and say none/unhandled.
 These are created using @java[a factory that is returned via the `Effect()` method]
-@scala[the `Effect` factory] and once created
-additional `SideEffects` can be added.
+@scala[the `Effect` factory] and once created additional `SideEffects` can be added.
 
 Most of them time this will be done with the `thenRun` method on the `Effect` above. It is also possible
 factor out common `SideEffect`s. For example:
@@ -328,7 +328,6 @@ Scala
 :  @@snip [AccountExampleWithEventHandlersInState.scala](/akka-persistence-typed/src/test/scala/docs/akka/persistence/typed/AccountExampleWithEventHandlersInState.scala) { #withEnforcedReplies }
 
 TODO include corresponding example in Java
-
 
 ## Serialization
 
@@ -414,3 +413,29 @@ Journals can reject events. The difference from a failure is that the journal mu
 trying to persist it e.g. because of a serialization exception. If an event is rejected it definitely won't be in the journal. 
 This is signalled to a `EventSourcedBehavior` via a `EventRejectedException` and can be handled with a @ref[supervisor](fault-tolerance.md). 
 
+## Stash
+
+When persisting events with `persist` or `persistAll` it is guaranteed that the persistent actor will not receive
+further commands until after the events have been confirmed to be persisted and additional side effects have been run.
+Incoming messages are stashed automatically until the `persist` is completed.
+
+Commands are also stashed during recovery and will not interfere with replayed events. Commands will be received
+when recovery has been completed.
+
+The stashing described above is handled automatically, but there is also a possibility to stash commands when
+they are received to defer processing of them until later. One example could be waiting for some external condition
+or interaction to complete before processing additional commands. That is accomplished by returning a `stash` effect
+and later use `thenUnstashAll` as illustrated in the following example
+
+Scala
+:  @@snip [StashingExample.scala](/akka-persistence-typed/src/test/scala/docs/akka/persistence/typed/StashingExample.scala) { #stashing }
+
+Java
+:  @@snip [StashingExample.java](/akka-persistence-typed/src/test/java/jdocs/akka/persistence/typed/StashingExample.java) { #stashing }
+
+You should be careful to not send more messages to a persistent actor than it can keep up with, otherwise the stash
+buffer will fill up and when reaching its maximum capacity the commands will be dropped. The capacity can be configured with:
+
+```
+akka.persistence.typed.stash-capacity = 10000
+```

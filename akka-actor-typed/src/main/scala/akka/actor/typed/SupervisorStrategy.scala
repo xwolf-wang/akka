@@ -175,7 +175,7 @@ object SupervisorStrategy {
     loggingEnabled:    Boolean,
     maxRestarts:       Int) extends BackoffSupervisorStrategy {
 
-    override def withLoggingEnabled(enabled: Boolean): SupervisorStrategy =
+    override def withLoggingEnabled(enabled: Boolean): BackoffSupervisorStrategy =
       copy(loggingEnabled = enabled)
 
     override def withResetBackoffAfter(timeout: FiniteDuration): BackoffSupervisorStrategy =
@@ -221,4 +221,6 @@ sealed abstract class BackoffSupervisorStrategy extends SupervisorStrategy {
    * the upper limit on restarts (and is the default)
    */
   def withMaxRestarts(maxRestarts: Int): BackoffSupervisorStrategy
+
+  def withLoggingEnabled(on: Boolean): BackoffSupervisorStrategy
 }
