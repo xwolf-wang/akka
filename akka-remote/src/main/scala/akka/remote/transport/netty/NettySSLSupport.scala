@@ -7,7 +7,7 @@ package akka.remote.transport.netty
 import akka.japi.Util._
 import com.typesafe.config.Config
 import org.jboss.netty.handler.ssl.SslHandler
-import scala.collection.compat._
+import akka.util.ccompat._
 
 /**
  * INTERNAL API

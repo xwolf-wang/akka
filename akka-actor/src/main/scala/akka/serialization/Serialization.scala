@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
 import java.util.NoSuchElementException
 import akka.annotation.InternalApi
-import scala.collection.compat._
+import akka.util.ccompat._
 
 object Serialization {
 
