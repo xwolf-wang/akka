@@ -1464,7 +1464,7 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
   def receiveGetKeyIds(): Unit = {
     val keys: Set[KeyId] = dataEntries.iterator.collect {
       case (key, (DataEnvelope(data, _, _), _)) if data != DeletedData ⇒ key
-    }.to(scala.collection.immutable.Set)
+    }.to(immutable.Set)
     replyTo ! GetKeyIdsResult(keys)
   }
 
@@ -1849,7 +1849,7 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
     // initiate pruning for removed nodes
     val removedSet: Set[UniqueAddress] = removedNodes.iterator.collect {
       case (r, t) if ((allReachableClockTime - t) > maxPruningDisseminationNanos) ⇒ r
-    }.to(scala.collection.immutable.Set)
+    }.to(immutable.Set)
 
     if (removedSet.nonEmpty) {
       for ((key, (envelope, _)) ← dataEntries; removed ← removedSet) {
