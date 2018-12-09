@@ -175,7 +175,7 @@ private[akka] object Running {
       case _                                ⇒ Behaviors.unhandled
     }.receiveSignal {
       case (_, PoisonPill) ⇒
-        if (isInternalStashEmpty) Behaviors.stopped
+        if (isInternalStashEmpty && !isUnstashAllExternalInProgress) Behaviors.stopped
         else handlingCommands(state.copy(receivedPoisonPill = true))
     }
 
@@ -193,7 +193,8 @@ private[akka] object Running {
     new PersistingEvents(state, numberOfEvents, shouldSnapshotAfterPersist, sideEffects)
   }
 
-  class PersistingEvents(
+  /** INTERNAL API */
+  @InternalApi private[akka] class PersistingEvents(
     var state:                  RunningState[S],
     numberOfEvents:             Int,
     shouldSnapshotAfterPersist: Boolean,
@@ -316,7 +317,7 @@ private[akka] object Running {
       behavior = applySideEffect(effect, state, behavior)
     }
 
-    if (state.receivedPoisonPill && isInternalStashEmpty)
+    if (state.receivedPoisonPill && isInternalStashEmpty && !isUnstashAllExternalInProgress)
       Behaviors.stopped
     else
       behavior

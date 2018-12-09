@@ -52,6 +52,8 @@ import java.util.concurrent.CompletionStage;
 //#import-gracefulStop
 //#import-terminated
 import akka.actor.Terminated;
+import scala.PartialFunction;
+import scala.runtime.BoxedUnit;
 //#import-terminated
 
 public class ActorDocTest extends AbstractJavaTest {
@@ -80,6 +82,11 @@ public class ActorDocTest extends AbstractJavaTest {
   //#context-actorOf
   public class FirstActor extends AbstractActor {
     final ActorRef child = getContext().actorOf(Props.create(MyActor.class), "myChild");
+
+    @Override
+    public void aroundReceive(PartialFunction<Object, BoxedUnit> receive, Object msg) {
+      super.aroundReceive(receive, msg);
+    }
 
     //#plus-some-behavior
     @Override

@@ -106,27 +106,9 @@ private[akka] trait StashManagement[C, E, S] {
     }
   }
 
-}
+  protected def isUnstashAllExternalInProgress: Boolean =
+    stashState.isUnstashAllExternalInProgress
 
-/**
- * INTERNAL API
- * Main reason for introduction of this trait is stash buffer reference management
- * in order to survive restart of internal behavior
- */
-@InternalApi private[akka] trait StashReferenceManagement {
-
-  private var stashBuffer: OptionVal[StashBuffer[InternalProtocol]] = OptionVal.None
-
-  def stashBuffer(settings: EventSourcedSettings): StashBuffer[InternalProtocol] = {
-    val buffer: StashBuffer[InternalProtocol] = stashBuffer match {
-      case OptionVal.Some(value) ⇒ value
-      case _                     ⇒ StashBuffer(settings.stashCapacity)
-    }
-    this.stashBuffer = OptionVal.Some(buffer)
-    stashBuffer.get
-  }
-
-  def clearStashBuffer(): Unit = stashBuffer = OptionVal.None
 }
 
 /** INTERNAL API: stash buffer state in order to survive restart of internal behavior */
