@@ -425,7 +425,13 @@ when recovery has been completed.
 The stashing described above is handled automatically, but there is also a possibility to stash commands when
 they are received to defer processing of them until later. One example could be waiting for some external condition
 or interaction to complete before processing additional commands. That is accomplished by returning a `stash` effect
-and later use `thenUnstashAll` as illustrated in the following example
+and later use `thenUnstashAll`.
+
+Let's use an example of a task manager to illustrate how the stashing effects can be used. It handles three commands;
+`StartTask`, `NextStep` and `EndTask`. Those commands are associated with a given `taskId` and the manager process
+one `taskId` at a time. A task is started when receiving `StartTask`, and continues when receiving `NextStep` commands
+until the final `EndTask` is received. Commands with another `taskId` than the one in progress are deferred by
+stashing them. When `EndTask` is processed a new task can start and the stashed commands are processed.
 
 Scala
 :  @@snip [StashingExample.scala](/akka-persistence-typed/src/test/scala/docs/akka/persistence/typed/StashingExample.scala) { #stashing }
@@ -439,3 +445,12 @@ buffer will fill up and when reaching its maximum capacity the commands will be 
 ```
 akka.persistence.typed.stash-capacity = 10000
 ```
+
+Note that the stashed commands are kept in an in-memory buffer, so in case of a crash they will not be
+processed. They will be discarded if the actor (entity) is passivated or rebalanced by Cluster Sharding.
+They will also be discarded if the actor is restarted (or stopped) due to that an exception was thrown
+from processing a command or side effect after persisting. The stash buffer is preserved for persist
+failures if an `onPersistFailure` backoff supervisor strategy is defined.
+
+It's allowed to stash messages while unstashing. Those newly added commands will not be processed by the
+`unstashAll` effect that was in progress and have to be unstashed by another `unstashAll`.

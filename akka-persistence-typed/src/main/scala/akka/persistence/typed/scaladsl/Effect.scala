@@ -76,6 +76,10 @@ object Effect {
   /**
    * Unstash the commands that were stashed with [[Effect.stash]].
    *
+   * It's allowed to stash messages while unstashing. Those newly added
+   * commands will not be processed by this `unstashAll` effect and have to be unstashed
+   * by another `unstashAll`.
+   *
    * Side effects can be chained with `andThen`, but note that the side effect is run immediately and not after
    * processing all unstashed commands.
    *
@@ -141,6 +145,10 @@ trait Effect[+Event, State] {
 
   /**
    * Unstash the commands that were stashed with [[Effect.stash]].
+   *
+   * It's allowed to stash messages while unstashing. Those newly added
+   * commands will not be processed by this `unstashAll` effect and have to be unstashed
+   * by another `unstashAll`.
    */
   def thenUnstashAll(): Effect[Event, State]
 

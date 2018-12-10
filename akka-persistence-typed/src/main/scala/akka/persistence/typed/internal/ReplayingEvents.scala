@@ -171,7 +171,7 @@ private[akka] class ReplayingEvents[C, E, S](override val setup: BehaviorSetup[C
     tryReturnRecoveryPermit("replay completed successfully")
     setup.recoveryCompleted(state.state)
 
-    if (state.receivedPoisonPill && isInternalStashEmpty && !isUnstashAllExternalInProgress)
+    if (state.receivedPoisonPill && isInternalStashEmpty && !isUnstashAllInProgress)
       Behaviors.stopped
     else {
       val running = Running[C, E, S](

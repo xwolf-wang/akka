@@ -153,7 +153,7 @@ private[akka] object Running {
           tryUnstashOne(applySideEffects(sideEffects, state))
 
         case _: Stash.type ⇒
-          stashExternal(IncomingCommand(msg))
+          stashUser(IncomingCommand(msg))
           tryUnstashOne(applySideEffects(sideEffects, state))
       }
     }
@@ -175,7 +175,7 @@ private[akka] object Running {
       case _                                ⇒ Behaviors.unhandled
     }.receiveSignal {
       case (_, PoisonPill) ⇒
-        if (isInternalStashEmpty && !isUnstashAllExternalInProgress) Behaviors.stopped
+        if (isInternalStashEmpty && !isUnstashAllInProgress) Behaviors.stopped
         else handlingCommands(state.copy(receivedPoisonPill = true))
     }
 
@@ -317,7 +317,7 @@ private[akka] object Running {
       behavior = applySideEffect(effect, state, behavior)
     }
 
-    if (state.receivedPoisonPill && isInternalStashEmpty && !isUnstashAllExternalInProgress)
+    if (state.receivedPoisonPill && isInternalStashEmpty && !isUnstashAllInProgress)
       Behaviors.stopped
     else
       behavior
@@ -332,7 +332,7 @@ private[akka] object Running {
         Behaviors.stopped
 
       case _: UnstashAll.type @unchecked ⇒
-        unstashAllExternal()
+        unstashAll()
         behavior
 
       case callback: Callback[_] ⇒

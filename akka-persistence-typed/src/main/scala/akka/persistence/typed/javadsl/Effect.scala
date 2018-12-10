@@ -56,10 +56,10 @@ import akka.persistence.typed.internal._
    * Stash the current command. Can be unstashed later with `Effect.thenUnstashAll`
    * or `EffectFactories.unstashAll`.
    *
-   * * Note that the stashed commands are kept in an in-memory buffer, so in case of a crash they will not be
-   * * processed. They will also be discarded if the actor is restarted (or stopped) due to that an exception was
-   * * thrown from processing a command or side effect after persisting. The stash buffer is preserved for persist
-   * * failures if an `onPersistFailure` backoff supervisor strategy is defined.
+   * Note that the stashed commands are kept in an in-memory buffer, so in case of a crash they will not be
+   * processed. They will also be discarded if the actor is restarted (or stopped) due to that an exception was
+   * thrown from processing a command or side effect after persisting. The stash buffer is preserved for persist
+   * failures if an `onPersistFailure` backoff supervisor strategy is defined.
    *
    * Side effects can be chained with `andThen`.
    */
@@ -68,6 +68,10 @@ import akka.persistence.typed.internal._
 
   /**
    * Unstash the commands that were stashed with `EffectFactories.stash`.
+   *
+   * It's allowed to stash messages while unstashing. Those newly added
+   * commands will not be processed by this `unstashAll` effect and have to be unstashed
+   * by another `unstashAll`.
    *
    * Side effects can be chained with `andThen`, but note that the side effect is run immediately and not after
    * processing all unstashed commands.
@@ -136,6 +140,10 @@ import akka.persistence.typed.internal._
 
   /**
    * Unstash the commands that were stashed with `EffectFactories.stash`.
+   *
+   * It's allowed to stash messages while unstashing. Those newly added
+   * commands will not be processed by this `unstashAll` effect and have to be unstashed
+   * by another `unstashAll`.
    */
   def thenUnstashAll(): Effect[Event, State]
 

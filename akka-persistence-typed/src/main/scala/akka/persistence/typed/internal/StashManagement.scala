@@ -14,7 +14,6 @@ import akka.persistence.DiscardToDeadLetterStrategy
 import akka.persistence.ReplyToStrategy
 import akka.persistence.ThrowOverflowExceptionStrategy
 import akka.util.ConstantFun
-import akka.util.OptionVal
 import akka.{ actor ⇒ a }
 
 /** INTERNAL API: Stash management for persistent behaviors */
@@ -28,28 +27,24 @@ private[akka] trait StashManagement[C, E, S] {
 
   private def stashState: StashState = setup.stashState
 
-  private def internalStashBuffer: StashBuffer[InternalProtocol] = stashState.internalStashBuffer
-
-  protected def isInternalStashEmpty: Boolean = internalStashBuffer.isEmpty
-
-  private def externalStashBuffer: StashBuffer[InternalProtocol] = stashState.externalStashBuffer
+  protected def isInternalStashEmpty: Boolean = stashState.internalStashBuffer.isEmpty
 
   /**
    * Stash a command to the internal stash buffer, which is used while waiting for persist to be completed.
    */
   protected def stashInternal(msg: InternalProtocol): Unit =
-    stash(msg, internalStashBuffer)
+    stash(msg, stashState.internalStashBuffer)
 
   /**
-   * Stash a command to the external stash buffer, which is used when `Stash` effect is used.
+   * Stash a command to the user stash buffer, which is used when `Stash` effect is used.
    */
-  protected def stashExternal(msg: InternalProtocol): Unit =
-    stash(msg, externalStashBuffer)
+  protected def stashUser(msg: InternalProtocol): Unit =
+    stash(msg, stashState.userStashBuffer)
 
   private def stash(msg: InternalProtocol, buffer: StashBuffer[InternalProtocol]): Unit = {
     if (setup.settings.logOnStashing) setup.log.debug(
       "Stashing message to {} stash: [{}] ",
-      if (buffer eq internalStashBuffer) "internal" else "external", msg)
+      if (buffer eq stashState.internalStashBuffer) "internal" else "user", msg)
 
     try buffer.stash(msg) catch {
       case e: StashOverflowException ⇒
@@ -72,18 +67,18 @@ private[akka] trait StashManagement[C, E, S] {
    */
   protected def tryUnstashOne(behavior: Behavior[InternalProtocol]): Behavior[InternalProtocol] = {
     val buffer =
-      if (stashState.isUnstashAllExternalInProgress)
-        externalStashBuffer
+      if (stashState.isUnstashAllInProgress)
+        stashState.userStashBuffer
       else
-        internalStashBuffer
+        stashState.internalStashBuffer
 
     if (buffer.nonEmpty) {
       if (setup.settings.logOnStashing) setup.log.debug(
         "Unstashing message from {} stash: [{}]",
-        if (buffer eq internalStashBuffer) "internal" else "external", buffer.head)
+        if (buffer eq stashState.internalStashBuffer) "internal" else "user", buffer.head)
 
-      if (stashState.isUnstashAllExternalInProgress)
-        stashState.decrementUnstashAllExternalProgress()
+      if (stashState.isUnstashAllInProgress)
+        stashState.decrementUnstashAllProgress()
 
       buffer.unstash(setup.context, behavior, 1, ConstantFun.scalaIdentityFunction)
     } else behavior
@@ -91,23 +86,23 @@ private[akka] trait StashManagement[C, E, S] {
   }
 
   /**
-   * Subsequent `tryUnstashOne` will first drain the external stash buffer, before using the
+   * Subsequent `tryUnstashOne` will first drain the user stash buffer, before using the
    * internal stash buffer. It will unstash as many commands as are in the buffer when
-   * `unstashAllExternal` was called, i.e. if subsequent commands stash more those will
-   * not be unstashed until `unstashAllExternal` is called again.
+   * `unstashAll` was called, i.e. if subsequent commands stash more those will
+   * not be unstashed until `unstashAll` is called again.
    */
-  protected def unstashAllExternal(): Unit = {
-    if (externalStashBuffer.nonEmpty) {
+  protected def unstashAll(): Unit = {
+    if (stashState.userStashBuffer.nonEmpty) {
       if (setup.settings.logOnStashing) setup.log.debug(
-        "Unstashing all [{}] messages from external stash, first is: [{}]",
-        externalStashBuffer.size, externalStashBuffer.head)
-      stashState.startUnstashAllExternal()
+        "Unstashing all [{}] messages from user stash, first is: [{}]",
+        stashState.userStashBuffer.size, stashState.userStashBuffer.head)
+      stashState.startUnstashAll()
       // tryUnstashOne is called from EventSourcedRunning at the end of processing each command (or when persist is completed)
     }
   }
 
-  protected def isUnstashAllExternalInProgress: Boolean =
-    stashState.isUnstashAllExternalInProgress
+  protected def isUnstashAllInProgress: Boolean =
+    stashState.isUnstashAllInProgress
 
 }
 
@@ -116,29 +111,26 @@ private[akka] trait StashManagement[C, E, S] {
 private[akka] class StashState(settings: EventSourcedSettings) {
 
   private var _internalStashBuffer: StashBuffer[InternalProtocol] = StashBuffer(settings.stashCapacity)
-  private var _externalStashBuffer: StashBuffer[InternalProtocol] = StashBuffer(settings.stashCapacity)
-  private var unstashAllExternalInProgress = 0
+  private var _userStashBuffer: StashBuffer[InternalProtocol] = StashBuffer(settings.stashCapacity)
+  private var unstashAllInProgress = 0
 
   def internalStashBuffer: StashBuffer[InternalProtocol] = _internalStashBuffer
 
-  def externalStashBuffer: StashBuffer[InternalProtocol] = _externalStashBuffer
+  def userStashBuffer: StashBuffer[InternalProtocol] = _userStashBuffer
 
   def clearStashBuffers(): Unit = {
     _internalStashBuffer = StashBuffer(settings.stashCapacity)
-    _externalStashBuffer = StashBuffer(settings.stashCapacity)
-    unstashAllExternalInProgress = 0
+    _userStashBuffer = StashBuffer(settings.stashCapacity)
+    unstashAllInProgress = 0
   }
 
-  def isUnstashAllExternalInProgress: Boolean =
-    unstashAllExternalInProgress > 0
+  def isUnstashAllInProgress: Boolean =
+    unstashAllInProgress > 0
 
-  def incrementUnstashAllExternalProgress(): Unit =
-    unstashAllExternalInProgress += 1
+  def decrementUnstashAllProgress(): Unit =
+    unstashAllInProgress -= 1
 
-  def decrementUnstashAllExternalProgress(): Unit =
-    unstashAllExternalInProgress -= 1
-
-  def startUnstashAllExternal(): Unit =
-    unstashAllExternalInProgress = _externalStashBuffer.size
+  def startUnstashAll(): Unit =
+    unstashAllInProgress = _userStashBuffer.size
 
 }

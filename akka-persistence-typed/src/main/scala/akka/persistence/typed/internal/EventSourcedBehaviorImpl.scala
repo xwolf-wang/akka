@@ -124,6 +124,7 @@ private[akka] final case class EventSourcedBehaviorImpl[Command, Event, State](
           def aroundSignal(ctx: typed.ActorContext[Any], signal: Signal, target: SignalTarget[Any]): Behavior[Any] = {
             if (signal == PostStop) {
               eventsourcedSetup.cancelRecoveryTimer()
+              // clear stash to be GC friendly
               stashState.clearStashBuffers()
             }
             target(ctx, signal)

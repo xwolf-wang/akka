@@ -365,7 +365,7 @@ class EventSourcedBehaviorStashSpec extends ScalaTestWithActorTestKit(EventSourc
       value3 should ===(8100)
     }
 
-    "discard external stash when restarted due to thrown exception" in {
+    "discard user stash when restarted due to thrown exception" in {
       val c = spawn(counter(nextPid()))
       val ackProbe = TestProbe[Ack]
       val stateProbe = TestProbe[State]
@@ -392,7 +392,7 @@ class EventSourcedBehaviorStashSpec extends ScalaTestWithActorTestKit(EventSourc
       c ! Increment("inc-5", ackProbe.ref)
 
       ackProbe.expectMessage(Ack("act"))
-      // inc-2 an inc-3 was in external stash, and didn't survive restart, as expected
+      // inc-2 an inc-3 was in user stash, and didn't survive restart, as expected
       ackProbe.expectMessage(Ack("inc-4"))
       ackProbe.expectMessage(Ack("inc-5"))
 
@@ -448,7 +448,7 @@ class EventSourcedBehaviorStashSpec extends ScalaTestWithActorTestKit(EventSourc
       stateProbe.expectMessage(State(9, active = true))
     }
 
-    "preserve external stash when persist failed" in {
+    "preserve user stash when persist failed" in {
       val c = spawn(counter(PersistenceId("fail-fifth-b")))
       val ackProbe = TestProbe[Ack]
       val stateProbe = TestProbe[State]
@@ -472,7 +472,7 @@ class EventSourcedBehaviorStashSpec extends ScalaTestWithActorTestKit(EventSourc
       ackProbe.expectMessage(Ack("act"))
       ackProbe.expectMessage(Ack("inc-2"))
       // inc-3 failed
-      // inc-4, inc-5 still in external stash and processed due to UnstashAll that was in progress
+      // inc-4, inc-5 still in user stash and processed due to UnstashAll that was in progress
       ackProbe.expectMessage(Ack("inc-4"))
       ackProbe.expectMessage(Ack("inc-5"))
       ackProbe.expectMessage(Ack("inc-6"))
