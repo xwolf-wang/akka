@@ -27,9 +27,9 @@ package object ccompat {
    * @tparam A Type of elements (e.g. `Int`, `Boolean`, etc.)
    * @tparam C Type of collection (e.g. `List[Int]`, `TreeMap[Int, String]`, etc.)
    */
-  type Factory[-A, +C] <: CanBuildFrom[Nothing, A, C] // Ideally, this would be an opaque type
+  private[akka] type Factory[-A, +C] <: CanBuildFrom[Nothing, A, C] // Ideally, this would be an opaque type
 
-  implicit class FactoryOps[-A, +C](private val factory: Factory[A, C]) {
+  private[akka] implicit class FactoryOps[-A, +C](private val factory: Factory[A, C]) {
 
     /**
      * @return A collection of type `C` containing the same elements
@@ -45,14 +45,14 @@ package object ccompat {
     def newBuilder: m.Builder[A, C] = factory()
   }
 
-  implicit def fromCanBuildFrom[A, C](implicit cbf: CanBuildFrom[Nothing, A, C]): Factory[A, C] =
+  private[akka] implicit def fromCanBuildFrom[A, C](implicit cbf: CanBuildFrom[Nothing, A, C]): Factory[A, C] =
     cbf.asInstanceOf[Factory[A, C]]
 
-  implicit def genericCompanionToCBF[A, CC[X] <: GenTraversable[X]](
+  private[akka] implicit def genericCompanionToCBF[A, CC[X] <: GenTraversable[X]](
     fact: GenericCompanion[CC]): CanBuildFrom[Any, A, CC[A]] =
     simpleCBF(fact.newBuilder[A])
 
-  implicit def sortedSetCompanionToCBF[A: Ordering, CC[X] <: c.SortedSet[X] with c.SortedSetLike[X, CC[X]]](
+  private[akka] implicit def sortedSetCompanionToCBF[A: Ordering, CC[X] <: c.SortedSet[X] with c.SortedSetLike[X, CC[X]]](
     fact: SortedSetFactory[CC]): CanBuildFrom[Any, A, CC[A]] =
     simpleCBF(fact.newBuilder[A])
 
@@ -61,17 +61,17 @@ package object ccompat {
     builder.result()
   }
 
-  implicit class ImmutableSortedMapExtensions(private val fact: i.SortedMap.type) extends AnyVal {
+  private[akka] implicit class ImmutableSortedMapExtensions(private val fact: i.SortedMap.type) extends AnyVal {
     def from[K: Ordering, V](source: TraversableOnce[(K, V)]): i.SortedMap[K, V] =
       build(i.SortedMap.newBuilder[K, V], source)
   }
 
-  implicit class ImmutableTreeMapExtensions(private val fact: i.TreeMap.type) extends AnyVal {
+  private[akka] implicit class ImmutableTreeMapExtensions(private val fact: i.TreeMap.type) extends AnyVal {
     def from[K: Ordering, V](source: TraversableOnce[(K, V)]): i.TreeMap[K, V] =
       build(i.TreeMap.newBuilder[K, V], source)
   }
 
-  implicit class SortedExtensionMethods[K, T <: Sorted[K, T]](private val fact: Sorted[K, T]) {
+  private[akka] implicit class SortedExtensionMethods[K, T <: Sorted[K, T]](private val fact: Sorted[K, T]) {
     def rangeFrom(from: K): T = fact.from(from)
     def rangeTo(to: K): T = fact.to(to)
     def rangeUntil(until: K): T = fact.until(until)

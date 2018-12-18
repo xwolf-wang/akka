@@ -10,6 +10,6 @@ package akka.util
  * based on https://github.com/scala/scala-collection-compat/blob/master/compat/src/main/scala-2.13/scala/collection/compat/package.scala
  */
 package object ccompat {
-  type Factory[-A, +C] = scala.collection.Factory[A, C]
-  val Factory = scala.collection.Factory
+  private[akka] type Factory[-A, +C] = scala.collection.Factory[A, C]
+  private[akka] val Factory = scala.collection.Factory
 }
